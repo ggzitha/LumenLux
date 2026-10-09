@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=3.1">
+    <link rel="stylesheet" href="/static/css/main.css?v=3.6">
 </head>
 <body>
     <div class="ambient-sphere sphere-1"></div>
@@ -52,11 +52,17 @@
                 <strong id="statRam">-- MB</strong>
             </div>
 
-            <div class="metric-badge" id="inactivityBadge" title="Auto-shutoff if inactive for {{ inactivity_time }}s">
-                <span>Sleep:</span>
+            <div class="metric-badge" id="inactivityBadge" title="WS2812B LED Auto-Off: {{ app_defaults.led_auto_off }}s | System Sleep: {{ inactivity_time }}s">
+                <span id="statIdleLabel">Sleep:</span>
                 <strong id="statIdleTimer">10:00</strong>
             </div>
 
+            <button type="button" class="btn-reset-defaults" id="btnResetAllDefaults" title="Reset all settings and browser cache to server defaults">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.77 20 14.44 20 13c0-4.42-3.58-8-8-8zm-6.2 1.3L4.34 7.76C3.5 9.24 3 11.05 3 13c0 4.42 3.58 8 8 8v4l5-5-5-5v4c-3.31 0-6-2.69-6-6 0-1.42.4-2.73 1.08-3.86l-1.28-1.84z"/>
+                </svg>
+                <span>Reset to Default</span>
+            </button>
             <a href="/logout" class="btn-logout" title="Sign out">Logout ({{ user }})</a>
         </div>
 
@@ -342,10 +348,7 @@
                                 <div class="field-group">
                                     <label class="field-label" for="resolutionSelect">Stream Resolution</label>
                                     <select id="resolutionSelect" class="select-custom">
-                                        <option value="320x240">320 x 240 (Low Bandwidth)</option>
-                                        <option value="640x480">640 x 480 (SD 4:3)</option>
-                                        <option value="1280x720">1280 x 720 (HD 720p 16:9)</option>
-                                        <option value="1920x1080" selected>1920 x 1080 (Full HD 1080p 16:9)</option>
+                                        <option value="detecting">Loading camera hardware resolutions...</option>
                                     </select>
                                 </div>
 
@@ -460,6 +463,7 @@
                     <span>Sleep:</span>
                     <strong id="statIdleTimerDrawer">10:00</strong>
                 </div>
+                <button type="button" class="drawer-reset-btn" id="btnResetAllDefaultsMobile" title="Reset all settings to server defaults">Reset</button>
                 <a href="/logout" class="drawer-logout-btn" title="Sign out">Logout</a>
             </div>
 
@@ -667,9 +671,87 @@
 
     </main>
 
+    <!-- OCR Security Authentication Modal -->
+    <div class="ocr-modal-backdrop {% if request.query_params.get('open_ocr') %}active{% endif %}" id="ocrAuthModal">
+        <div class="ocr-modal-card">
+            <div class="ocr-modal-header">
+                <div class="ocr-modal-title">
+                    <div class="ocr-modal-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3>OCR Security Access</h3>
+                        <p>Password required to unlock Text Recognition</p>
+                    </div>
+                </div>
+                <button type="button" class="ocr-modal-close" id="btnCancelOcrModal" title="Close">✕</button>
+            </div>
+            <form id="ocrAuthForm" class="ocr-modal-body" autocomplete="off" onsubmit="return false;">
+                <div class="ocr-input-group">
+                    <label for="ocrPasswordInput">Security Password</label>
+                    <div class="ocr-password-field">
+                        <input type="password" id="ocrPasswordInput" placeholder="Enter OCR password..." required spellcheck="false" autocomplete="current-password">
+                        <button type="button" class="btn-toggle-ocr-pwd" id="btnToggleOcrPwdVisibility" title="Show/Hide Password">
+                            <svg id="ocrEyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="ocr-error-msg" id="ocrErrorMsg"></div>
+                </div>
+                <div class="ocr-modal-actions">
+                    <button type="button" class="btn-ocr-cancel" id="btnCloseOcrModal">Cancel</button>
+                    <button type="submit" class="btn-ocr-submit" id="btnSubmitOcrPassword">
+                        <span id="ocrSubmitText">Unlock OCR</span>
+                        <div class="ocr-spinner" id="ocrSpinner" style="display: none;"></div>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reset to Defaults Confirmation Modal Dialog -->
+    <div class="ocr-modal-backdrop" id="confirmResetModal">
+        <div class="ocr-modal-card">
+            <div class="ocr-modal-header">
+                <div class="ocr-modal-title">
+                    <div class="ocr-modal-icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(239, 68, 68, 0.2)); border-color: rgba(245, 158, 11, 0.4); color: var(--neon-amber); box-shadow: 0 0 14px rgba(245, 158, 11, 0.25);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3>Reset to Server Defaults?</h3>
+                        <p>Clear browser cache & restore default settings</p>
+                    </div>
+                </div>
+                <button type="button" class="ocr-modal-close" id="btnCancelResetClose" title="Close">✕</button>
+            </div>
+            <div class="ocr-modal-body">
+                <p style="font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5;">
+                    This will clear all browser-saved preferences, cached camera and light settings, and restore all configurations from the server (.env). Are you sure?
+                </p>
+                <div class="ocr-modal-actions" style="margin-top: 1.4rem;">
+                    <button type="button" class="btn-ocr-cancel" id="btnCancelResetModal">Cancel</button>
+                    <button type="button" class="btn-ocr-submit" id="btnConfirmResetSubmit" style="background: linear-gradient(135deg, var(--neon-amber), #ea580c); color: #fff; box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);">
+                        <span>Yes, Reset Defaults</span>
+                        <div class="ocr-spinner" id="resetSpinner" style="display: none; border-top-color: #fff;"></div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=3.1"></script>
+    <!-- App Configuration Defaults from Environment (.env) -->
+    <script>
+        window.APP_DEFAULTS = {{ app_defaults | tojson }};
+        window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
+    </script>
+    <script src="/static/js/app.js?v=3.6"></script>
 </body>
 </html>

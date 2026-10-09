@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request, Response, Form, Depends, HTTPException, st
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import secrets
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 # Load environment configuration
@@ -28,7 +29,86 @@ BECKEND_RPI_IP = os.environ.get("BECKEND_RPI_IP", "192.168.88.21")
 BECKEND_RPI_PORT = int(os.environ.get("BECKEND_RPI_PORT", 5000))
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 8080))
 SECRET_KEY = os.environ.get("SECRET_KEY", "lumen-zero-default-super-secure-key-2026")
-INACTIVITY_TIME = int(os.environ.get("INACTIVITY_TIME", 600))  # Default 10 minutes (600s)
+
+# Hardware & Feature Defaults from .env
+ANTI_FLICKER = os.environ.get("ANTI_FLICKER", "50").strip()
+LED_BRIGHTNESS = int(os.environ.get("LED_BRIGHTNESS", 45))
+DEFAULT_LED_COLOR = os.environ.get("DEFAULT_LED_COLOR", "WHITE").strip()
+LED_AUTO_OFF = int(os.environ.get("LED_AUTO_OFF", 120))  # Auto turn off WS2812B LEDs after 2m (120s)
+LED_LENGTH = int(os.environ.get("LED_LENGTH", 100))
+DEFAULT_RESOLUTION = os.environ.get("DEFAULT_RESOLUTION", "1920x1080").strip()
+OCR_PASSWORD = os.environ.get("OCR_PASSWORD", "QwertY123!")
+
+# Full System Inactivity Timeout (Seconds) - Powers off camera and entire system after 10m (600s)
+INACTIVITY_TIME = int(os.environ.get("INACTIVITY_TIME", 600))
+
+def parse_color_setting(color_str: str) -> dict:
+    """Parse color string into RGB tuple and Hex string."""
+    name = (color_str or "WHITE").strip().upper()
+    presets = {
+        "WHITE": (255, 255, 255, "#ffffff"),
+        "WARM": (255, 214, 164, "#ffd6a4"),
+        "WARM_WHITE": (255, 214, 164, "#ffd6a4"),
+        "YELLOW": (255, 234, 0, "#ffea00"),
+        "RED": (239, 68, 68, "#ef4444"),
+        "GREEN": (16, 185, 129, "#10b981"),
+        "BLUE": (59, 130, 246, "#3b82f6"),
+    }
+    if name in presets:
+        r, g, b, h = presets[name]
+        return {"r": r, "g": g, "b": b, "hex": h, "name": name}
+    
+    # Try parsing hex if formatted like #RRGGBB or RRGGBB
+    clean = name.replace("#", "")
+    if len(clean) == 6:
+        try:
+            r = int(clean[0:2], 16)
+            g = int(clean[2:4], 16)
+            b = int(clean[4:6], 16)
+            return {"r": r, "g": g, "b": b, "hex": f"#{clean.lower()}", "name": f"#{clean}"}
+        except ValueError:
+            pass
+    return {"r": 255, "g": 255, "b": 255, "hex": "#ffffff", "name": "WHITE"}
+
+def parse_resolution_setting(res_str: str) -> str:
+    """Normalize resolution setting to lowercase format (e.g. 1920x1080, 3840x2160, 1280x720)."""
+    val = (res_str or "1920x1080").strip().lower()
+    mapping = {
+        "ultra": "1920x1080",
+        "high": "1280x720",
+        "medium": "640x480",
+        "low": "320x240"
+    }
+    return mapping.get(val, val)
+
+def parse_anti_flicker_setting(flicker_str: str) -> tuple[int, int]:
+    """Map anti-flicker frequency to (hz, v4l2_code). 0=off, 1=50Hz, 2=60Hz."""
+    val = str(flicker_str or "50").strip().lower()
+    if val in ("50", "50hz"):
+        return (50, 1)
+    elif val in ("60", "60hz"):
+        return (60, 2)
+    return (0, 0)
+
+def get_app_defaults() -> dict:
+    """Build dictionary of environment-defined application defaults for frontend."""
+    col = parse_color_setting(DEFAULT_LED_COLOR)
+    res_wh = parse_resolution_setting(DEFAULT_RESOLUTION)
+    hz, code = parse_anti_flicker_setting(ANTI_FLICKER)
+    return {
+        "anti_flicker": hz,
+        "anti_flicker_code": code,
+        "led_brightness": LED_BRIGHTNESS,
+        "default_led_color": DEFAULT_LED_COLOR,
+        "led_color_rgb": [col["r"], col["g"], col["b"]],
+        "led_color_hex": col["hex"],
+        "led_auto_off": LED_AUTO_OFF,
+        "inactivity_time": INACTIVITY_TIME,
+        "led_length": LED_LENGTH,
+        "default_resolution": res_wh,
+    }
+
+
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -54,48 +134,73 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Shared HTTPX client with connection pooling and timeouts
 backend_client: Optional[httpx.AsyncClient] = None
 
-# Inactivity state tracking
+# Inactivity state tracking (Stage 1: LED auto-off, Stage 2: Full system sleep)
 last_activity_time = time.time()
+led_auto_off_done = False
 inactivity_shut_off = False
 watchdog_task: Optional[asyncio.Task] = None
 
 def record_activity():
     """Register user interaction timestamp."""
-    global last_activity_time, inactivity_shut_off
+    global last_activity_time, led_auto_off_done, inactivity_shut_off
     last_activity_time = time.time()
+    led_auto_off_done = False
     inactivity_shut_off = False
 
 
 async def inactivity_watchdog_loop():
-    """Background monitor that automatically turns off camera and WS2812B lights if no user is active."""
-    global last_activity_time, inactivity_shut_off
-    logger.info("Inactivity watchdog active. Auto-shutdown threshold: %d seconds (%d mins).", INACTIVITY_TIME, INACTIVITY_TIME // 60)
+    """
+    Background monitor with two distinct timeout stages:
+    1. At idle >= LED_AUTO_OFF (2 mins / 120s): Automatically turn off WS2812B LEDs only.
+       The camera and live video stream stay active!
+    2. At idle >= INACTIVITY_TIME (10 mins / 600s): Automatically power off camera and all hardware (complete sleep).
+    """
+    global last_activity_time, led_auto_off_done, inactivity_shut_off
+    logger.info(
+        "Inactivity watchdog active. LED auto-off: %d seconds (%d mins) | Full sleep: %d seconds (%d mins).",
+        LED_AUTO_OFF, LED_AUTO_OFF // 60,
+        INACTIVITY_TIME, INACTIVITY_TIME // 60
+    )
     while True:
         try:
             await asyncio.sleep(5)
             idle = time.time() - last_activity_time
+
+            # Stage 1: Turn off WS2812B lights after 2 minutes of idle (Camera remains ON)
+            if idle >= LED_AUTO_OFF and not led_auto_off_done:
+                logger.info(
+                    "[LED AUTO-OFF] No user activity for %d seconds. Turning off WS2812B LEDs (Camera stream stays ACTIVE).",
+                    int(idle)
+                )
+                led_auto_off_done = True
+                if backend_client:
+                    try:
+                        await backend_client.post("/api/lights", json={"power": False}, timeout=4.0)
+                    except Exception as e:
+                        logger.error("Failed to turn off lights on LED auto-off: %s", e)
+
+            # Stage 2: Turn off camera and entire system after 10 minutes of idle
             if idle >= INACTIVITY_TIME and not inactivity_shut_off:
                 logger.warning(
-                    "[INACTIVITY TIMEOUT] No user interaction for %d seconds. Automatically powering off camera and WS2812B lights on %s...",
+                    "[FULL INACTIVITY TIMEOUT] No user interaction for %d seconds. Powering down camera and all hardware on %s...",
                     int(idle), BECKEND_RPI_IP
                 )
                 inactivity_shut_off = True
                 if backend_client:
-                    # Turn off camera
                     try:
                         await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=4.0)
                     except Exception as e:
-                        logger.error("Failed to disable camera on inactivity: %s", e)
-                    # Turn off WS2812B strip
+                        logger.error("Failed to disable camera on full inactivity: %s", e)
                     try:
                         await backend_client.post("/api/lights", json={"power": False}, timeout=4.0)
                     except Exception as e:
-                        logger.error("Failed to turn off lights on inactivity: %s", e)
-                logger.info("[INACTIVITY TIMEOUT] Hardware successfully shut down.")
+                        logger.error("Failed to turn off lights on full inactivity: %s", e)
+                logger.info("[FULL INACTIVITY TIMEOUT] Hardware successfully powered down.")
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Unexpected error in inactivity watchdog: %s", e)
+
 
 
 @app.on_event("startup")
@@ -219,6 +324,15 @@ async def favicon_route():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, user: str = Depends(require_auth)):
+    initial_cameras = []
+    try:
+        if backend_client:
+            res = await backend_client.get("/api/cameras", timeout=2.5)
+            if res.status_code == 200:
+                initial_cameras = res.json().get("cameras", [])
+    except Exception as e:
+        logger.debug("Could not pre-fetch cameras for initial render: %s", e)
+
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -226,12 +340,39 @@ async def dashboard(request: Request, user: str = Depends(require_auth)):
             "user": user,
             "rpi_ip": BECKEND_RPI_IP,
             "rpi_port": BECKEND_RPI_PORT,
-            "inactivity_time": INACTIVITY_TIME
+            "inactivity_time": INACTIVITY_TIME,
+            "app_defaults": get_app_defaults(),
+            "initial_cameras": initial_cameras
         }
     )
 
 
+# --- CONFIG & OCR AUTHENTICATION APIS ---
+
+@app.get("/api/config/defaults")
+async def api_config_defaults(user: str = Depends(require_auth)):
+    """Return environment-configured defaults for frontend controls."""
+    return get_app_defaults()
+
+
+@app.post("/api/ocr/verify")
+async def verify_ocr_password(payload: dict, user: str = Depends(require_auth)):
+    """Verify security password for OCR feature access."""
+    record_activity()
+    provided = str(payload.get("password", "")).strip()
+    if secrets.compare_digest(provided, OCR_PASSWORD):
+        logger.info("OCR password successfully verified for user '%s'", user)
+        return {"success": True, "message": "OCR access granted"}
+    
+    logger.warning("Invalid OCR password attempt for user '%s'", user)
+    return JSONResponse(
+        status_code=401,
+        content={"success": False, "error": "Invalid OCR password. Access denied."}
+    )
+
+
 # --- BACKEND PROXY & HEAVY LIFTING APIS ---
+
 
 @app.post("/api/heartbeat")
 async def user_heartbeat(user: str = Depends(require_auth)):
@@ -241,7 +382,9 @@ async def user_heartbeat(user: str = Depends(require_auth)):
     return {
         "status": "ok",
         "idle_seconds": int(idle),
-        "timeout": INACTIVITY_TIME,
+        "led_auto_off": LED_AUTO_OFF,
+        "inactivity_time": INACTIVITY_TIME,
+        "remaining_led_seconds": max(0, int(LED_AUTO_OFF - idle)),
         "remaining_seconds": max(0, int(INACTIVITY_TIME - idle))
     }
 

@@ -87,6 +87,65 @@ class CameraManager:
         except Exception:
             return False
 
+    def _get_supported_resolutions(self, dev_path: str) -> list[str]:
+        """Query supported discrete video capture frame sizes directly from connected camera via v4l2-ctl."""
+        if not dev_path or dev_path.startswith("/dev/null") or "virtual" in dev_path:
+            return ["1920x1080", "1280x720", "640x480"]
+
+        resolutions = set()
+        # Query discrete resolutions for MJPEG streaming format first
+        for fmt in ["MJPG", "JPEG"]:
+            try:
+                out = subprocess.check_output(
+                    ["v4l2-ctl", "-d", dev_path, f"--list-framesizes={fmt}"],
+                    text=True, stderr=subprocess.DEVNULL, timeout=2.0
+                )
+                matches = re.findall(r"Size:\s+Discrete\s+(\d+)x(\d+)", out)
+                for w, h in matches:
+                    w_int, h_int = int(w), int(h)
+                    # Filter out tiny unusable resolutions (< 320x240)
+                    if w_int >= 320 and h_int >= 240:
+                        resolutions.add((w_int, h_int))
+            except Exception:
+                pass
+
+        # If camera doesn't support MJPG, query other formats (YUYV, H264)
+        if not resolutions:
+            for fmt in ["YUYV", "H264"]:
+                try:
+                    out = subprocess.check_output(
+                        ["v4l2-ctl", "-d", dev_path, f"--list-framesizes={fmt}"],
+                        text=True, stderr=subprocess.DEVNULL, timeout=2.0
+                    )
+                    matches = re.findall(r"Size:\s+Discrete\s+(\d+)x(\d+)", out)
+                    for w, h in matches:
+                        w_int, h_int = int(w), int(h)
+                        if w_int >= 320 and h_int >= 240:
+                            resolutions.add((w_int, h_int))
+                except Exception:
+                    pass
+
+        if not resolutions:
+            try:
+                out = subprocess.check_output(
+                    ["v4l2-ctl", "-d", dev_path, "--list-formats-ext"],
+                    text=True, stderr=subprocess.DEVNULL, timeout=2.5
+                )
+                matches = re.findall(r"Size:\s+Discrete\s+(\d+)x(\d+)", out)
+                for w, h in matches:
+                    w_int, h_int = int(w), int(h)
+                    if w_int >= 320 and h_int >= 240:
+                        resolutions.add((w_int, h_int))
+            except Exception:
+                pass
+
+        if not resolutions:
+            return ["1920x1080", "1280x720", "640x480"]
+
+        # Sort descending by pixel count (area) then width
+        sorted_res = sorted(resolutions, key=lambda item: (item[0] * item[1], item[0]), reverse=True)
+        return [f"{w}x{h}" for w, h in sorted_res]
+
     def discover_cameras(self) -> list[dict]:
         """Scan for connected USB webcams and CSI cameras."""
         cameras = []
@@ -114,6 +173,7 @@ class CameraManager:
                         "type": "usb",
                         "device_path": primary_path,
                         "all_nodes": capture_nodes,
+                        "resolutions": self._get_supported_resolutions(primary_path),
                         "active": (cam_id == self.active_camera_id)
                     })
         except Exception as e:
@@ -132,6 +192,7 @@ class CameraManager:
                             "name": f"Raspberry Pi CSI Camera ({name})",
                             "type": "csi",
                             "device_path": f"/dev/media{idx}",
+                            "resolutions": ["1920x1080", "1280x720", "640x480"],
                             "active": False
                         })
                 picam.close()
@@ -146,6 +207,7 @@ class CameraManager:
                 "name": "Virtual Test Camera (Synthetic Test Card)",
                 "type": "virtual",
                 "device_path": "/dev/null",
+                "resolutions": ["1920x1080", "1280x720", "640x480"],
                 "active": True
             })
 
@@ -482,6 +544,7 @@ class CameraManager:
 
     def get_state(self) -> dict:
         with self.lock:
+            dev_node = f"/dev/{self.active_camera_id}" if self.active_camera_id else "/dev/null"
             return {
                 "active_camera_id": self.active_camera_id,
                 "camera_enabled": self.camera_enabled,
@@ -490,6 +553,7 @@ class CameraManager:
                     "width": self.resolution[0],
                     "height": self.resolution[1]
                 },
+                "supported_resolutions": self._get_supported_resolutions(dev_node),
                 "client_count": self.client_count,
                 "controls": self.get_camera_controls()
             }

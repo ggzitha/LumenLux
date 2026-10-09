@@ -4,27 +4,49 @@
  * FPS calculation, LED strip simulation, and browser LocalStorage persistence.
  */
 
+// Environment Defaults from .env (injected via window.APP_DEFAULTS)
+const envDefaults = window.APP_DEFAULTS || {
+    anti_flicker: 50,
+    anti_flicker_code: 1,
+    led_brightness: 45,
+    default_led_color: "WHITE",
+    led_color_rgb: [255, 255, 255],
+    led_color_hex: "#ffffff",
+    led_auto_off: 120,
+    inactivity_time: 600,
+    led_length: 100,
+    default_resolution: "1920x1080"
+};
+
 // Global State
 const state = {
-    // Light state (Defaults: Power ON, White, 30% brightness, Static effect)
+    // Light state (Initialized with .env defaults)
     lights: {
         power: true,
-        color: { r: 255, g: 255, b: 255, hex: "#ffffff" },
-        brightness: 0.45,
-        brightness_pct: 45,
+        color: {
+            r: envDefaults.led_color_rgb?.[0] ?? 255,
+            g: envDefaults.led_color_rgb?.[1] ?? 255,
+            b: envDefaults.led_color_rgb?.[2] ?? 255,
+            hex: envDefaults.led_color_hex ?? "#ffffff"
+        },
+        brightness: (envDefaults.led_brightness ?? 45) / 100.0,
+        brightness_pct: envDefaults.led_brightness ?? 45,
         effect: "static",
-        speed: 50
+        speed: 50,
+        length: envDefaults.led_length ?? 100,
+        auto_off_sec: envDefaults.led_auto_off ?? 120
     },
-    // Camera state
+    // Camera state (Initialized with .env defaults)
     camera: {
         enabled: true,
         active_id: null,
-        resolution: "640x480",
-        target_fps: 15,
+        resolution: envDefaults.default_resolution ?? "1920x1080",
+        target_fps: 30,
         digital_zoom: 1.0,
         flip_h: false,
         flip_v: false,
         grid_active: false,
+        anti_flicker_code: envDefaults.anti_flicker_code ?? 1,
         filters: {
             brightness: 100,
             contrast: 100,
@@ -39,7 +61,7 @@ const state = {
 };
 
 // --- LOCAL STORAGE CACHE HELPERS ---
-const STORAGE_KEY = "lumen_zero_user_config_v1";
+const STORAGE_KEY = "lumen_zero_user_config_v2";
 
 function loadSavedConfig() {
     try {
@@ -49,6 +71,8 @@ function loadSavedConfig() {
             if (parsed.lights) Object.assign(state.lights, parsed.lights);
             if (parsed.camera) Object.assign(state.camera, parsed.camera);
             console.log("[Storage] User configuration loaded from browser storage:", parsed);
+        } else {
+            console.log("[Config] Initialized with .env defaults:", envDefaults);
         }
     } catch (e) {
         console.warn("[Storage] Could not read localStorage:", e);
@@ -547,6 +571,10 @@ function syncRgbInputs(r, g, b, fromWheel = false) {
 
 function setMasterPower(on) {
     state.lights.power = !!on;
+    if (state.lights.power) {
+        lastUserInteraction = Date.now();
+        ledAutoOffHandled = false;
+    }
     const toggle = document.getElementById("masterPowerToggle");
     if (toggle) toggle.checked = state.lights.power;
     const btn = document.getElementById("masterPowerBtn");
@@ -779,32 +807,109 @@ function applyViewportTransforms() {
     stream.style.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
 }
 
+// Available camera devices cache
+let connectedCamerasList = [];
+
+function getResolutionFriendlyLabel(resStr) {
+    const parts = String(resStr).split("x").map(Number);
+    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return resStr;
+    const [w, h] = parts;
+    if (w === 3840 && h === 2160) return "3840 x 2160 (4K Ultra HD 16:9)";
+    if (w === 2560 && h === 1440) return "2560 x 1440 (2K QHD 16:9)";
+    if (w === 1920 && h === 1080) return "1920 x 1080 (Full HD 1080p 16:9)";
+    if (w === 1600 && h === 896) return "1600 x 896 (HD+ 16:9)";
+    if (w === 1280 && h === 720) return "1280 x 720 (HD 720p 16:9)";
+    if (w === 1024 && h === 576) return "1024 x 576 (WSVGA 16:9)";
+    if (w === 960 && h === 720) return "960 x 720 (HD 4:3)";
+    if (w === 800 && h === 600) return "800 x 600 (SVGA 4:3)";
+    if (w === 800 && h === 448) return "800 x 448 (16:9)";
+    if (w === 640 && h === 480) return "640 x 480 (VGA 4:3)";
+    if (w === 640 && h === 360) return "640 x 360 (nHD 16:9)";
+    if (w === 320 && h === 240) return "320 x 240 (QVGA 4:3)";
+    return `${w} x ${h}`;
+}
+
+function populateCameraResolutions(resolutions) {
+    const resSelect = document.getElementById("resolutionSelect");
+    if (!resSelect) return;
+    
+    resSelect.innerHTML = "";
+    const list = Array.isArray(resolutions) && resolutions.length > 0
+        ? resolutions
+        : ["1920x1080", "1280x720", "640x480"];
+
+    list.forEach(res => {
+        const opt = document.createElement("option");
+        opt.value = res;
+        opt.textContent = getResolutionFriendlyLabel(res);
+        resSelect.appendChild(opt);
+    });
+
+    // Preferred resolution precedence: 1. saved state, 2. .env default, 3. first available (highest camera capability)
+    const targetPreferred = state.camera.resolution || envDefaults.default_resolution || "1920x1080";
+    let matched = false;
+    for (let i = 0; i < resSelect.options.length; i++) {
+        if (resSelect.options[i].value === targetPreferred) {
+            resSelect.selectedIndex = i;
+            matched = true;
+            state.camera.resolution = targetPreferred;
+            break;
+        }
+    }
+
+    if (!matched) {
+        // Camera does not support the preferred resolution (e.g., Logitech C922 cannot do 4K, or 720p cam cannot do 1080p)
+        // Auto-select the camera's highest capability!
+        resSelect.selectedIndex = 0;
+        state.camera.resolution = resSelect.options[0]?.value || "1280x720";
+        console.log(`[Camera Hardware] Clamped resolution to hardware maximum: ${state.camera.resolution}`);
+    }
+}
+
+function applyCameraList(cameras) {
+    const select = document.getElementById("cameraSelect");
+    if (!select) return;
+    select.innerHTML = "";
+    connectedCamerasList = cameras || [];
+
+    if (connectedCamerasList.length > 0) {
+        let activeCam = null;
+        connectedCamerasList.forEach(cam => {
+            const opt = document.createElement("option");
+            opt.value = cam.id;
+            opt.textContent = `${cam.name} (${cam.type.toUpperCase()})`;
+            if (cam.id === state.camera.active_id || cam.active) {
+                opt.selected = true;
+                state.camera.active_id = cam.id;
+                activeCam = cam;
+            }
+            select.appendChild(opt);
+        });
+        if (!activeCam) {
+            activeCam = connectedCamerasList[0];
+            state.camera.active_id = activeCam.id;
+            select.selectedIndex = 0;
+        }
+        const badge = document.getElementById("activeCamBadge");
+        if (badge) badge.textContent = select.options[select.selectedIndex]?.text || "Camera Connected";
+        
+        // Dynamically populate resolution dropdown strictly from connected camera hardware data!
+        populateCameraResolutions(activeCam.resolutions);
+    } else {
+        const opt = document.createElement("option");
+        opt.value = "none";
+        opt.textContent = "No camera detected";
+        select.appendChild(opt);
+        populateCameraResolutions([]);
+    }
+}
+
 async function refreshCameraList() {
     try {
         const res = await fetch("/api/cameras");
         if (!res.ok) return;
         const data = await res.json();
-        const select = document.getElementById("cameraSelect");
-        select.innerHTML = "";
-
-        if (data.cameras && data.cameras.length > 0) {
-            data.cameras.forEach(cam => {
-                const opt = document.createElement("option");
-                opt.value = cam.id;
-                opt.textContent = `${cam.name} (${cam.type.toUpperCase()})`;
-                if (cam.id === state.camera.active_id || cam.active) {
-                    opt.selected = true;
-                    state.camera.active_id = cam.id;
-                }
-                select.appendChild(opt);
-            });
-            document.getElementById("activeCamBadge").textContent = select.options[select.selectedIndex]?.text || "Camera Connected";
-        } else {
-            const opt = document.createElement("option");
-            opt.value = "none";
-            opt.textContent = "No camera detected";
-            select.appendChild(opt);
-        }
+        applyCameraList(data.cameras);
     } catch (e) {
         console.warn("Could not fetch camera list:", e);
     }
@@ -886,6 +991,10 @@ function setupCameraListeners() {
     const select = document.getElementById("cameraSelect");
     select?.addEventListener("change", (e) => {
         state.camera.active_id = e.target.value;
+        const selectedCam = connectedCamerasList.find(c => c.id === state.camera.active_id);
+        if (selectedCam && selectedCam.resolutions) {
+            populateCameraResolutions(selectedCam.resolutions);
+        }
         updateCameraSettings();
         document.getElementById("activeCamBadge").textContent = select.options[select.selectedIndex]?.text;
     });
@@ -893,9 +1002,6 @@ function setupCameraListeners() {
     document.getElementById("btnRefreshCams")?.addEventListener("click", () => {
         refreshCameraList();
         showToast("Scanning for USB and CSI cameras...");
-    });
-    document.getElementById("btnOcrCapture")?.addEventListener("click", () => {
-        showToast("OCR Text Recognition mode initialized");
     });
 
     // Camera Enable / Disable Toggle with state synchronization and rapid click protection
@@ -960,10 +1066,9 @@ function setupCameraListeners() {
         }
     });
 
-    // Resolution & FPS
+    // Resolution (Populated dynamically from connected camera hardware data)
     const resSelect = document.getElementById("resolutionSelect");
-    resSelect.value = state.camera.resolution;
-    resSelect.addEventListener("change", (e) => {
+    resSelect?.addEventListener("change", (e) => {
         state.camera.resolution = e.target.value;
         updateCameraSettings();
     });
@@ -1199,6 +1304,13 @@ function setupDirectShowControls() {
         });
     });
 
+    const tabParam = new URLSearchParams(window.location.search).get("tab");
+    if (tabParam === "stream") {
+        document.getElementById("tabBtnStreamCfg")?.click();
+    } else if (tabParam === "vpa") {
+        document.getElementById("tabBtnVpa")?.click();
+    }
+
     // 2. Camera Control Tab Bindings
     bindControlPair("ctrlZoomSlider", "ctrlZoomNum", "zoom");
     bindControlPair("ctrlFocusSlider", "ctrlFocusNum", "focus", "ctrlFocusAuto", "focus_auto", false);
@@ -1239,8 +1351,11 @@ function setupDirectShowControls() {
         sendHardwareControl("saturation", satVal);
     });
 
-    // PowerLine Frequency Dropdown
+    // PowerLine Frequency Dropdown (Default from .env: 50Hz)
     const powerlineSelect = document.getElementById("vpaPowerlineFreq");
+    if (powerlineSelect && envDefaults.anti_flicker_code !== undefined) {
+        powerlineSelect.value = envDefaults.anti_flicker_code.toString();
+    }
     powerlineSelect?.addEventListener("change", (e) => {
         sendHardwareControl("powerline_freq", e.target.value);
         showToast(`Anti-Flicker: ${powerlineSelect.options[powerlineSelect.selectedIndex].text}`);
@@ -1354,6 +1469,8 @@ async function pollSystemStatus() {
 // --- INACTIVITY & HEARTBEAT TRACKING ---
 let lastUserInteraction = Date.now();
 let userActiveSinceLastHeartbeat = true;
+let ledAutoOffHandled = false;
+let systemSleepHandled = false;
 
 function setupInactivityHeartbeat() {
     const events = ["mousemove", "keydown", "click", "touchstart", "scroll"];
@@ -1361,13 +1478,16 @@ function setupInactivityHeartbeat() {
         window.addEventListener(evt, () => {
             lastUserInteraction = Date.now();
             userActiveSinceLastHeartbeat = true;
+            ledAutoOffHandled = false;
+            systemSleepHandled = false;
         }, { passive: true });
     });
 
     const timerEl = document.getElementById("statIdleTimer");
     const timerDrawerEl = document.getElementById("statIdleTimerDrawer");
+    const labelEl = document.getElementById("statIdleLabel");
 
-    const updateTimerText = (formattedTime, isWarning) => {
+    const updateTimerText = (formattedTime, isWarning, labelText = "Sleep:") => {
         if (timerEl) {
             timerEl.textContent = formattedTime;
             timerEl.style.color = isWarning ? "var(--neon-red)" : "";
@@ -1376,7 +1496,13 @@ function setupInactivityHeartbeat() {
             timerDrawerEl.textContent = formattedTime;
             timerDrawerEl.style.color = isWarning ? "var(--neon-red)" : "";
         }
+        if (labelEl) {
+            labelEl.textContent = labelText;
+        }
     };
+
+    const ledTimeout = envDefaults.led_auto_off || 120;
+    const systemSleepTimeout = envDefaults.inactivity_time || 600;
 
     // Periodic heartbeat every 20 seconds while user is active
     setInterval(async () => {
@@ -1386,12 +1512,6 @@ function setupInactivityHeartbeat() {
                 if (res.ok) {
                     const data = await res.json();
                     userActiveSinceLastHeartbeat = false;
-                    if (data.remaining_seconds !== undefined) {
-                        const m = Math.floor(data.remaining_seconds / 60);
-                        const s = data.remaining_seconds % 60;
-                        const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-                        updateTimerText(formatted, data.remaining_seconds <= 60);
-                    }
                 }
             } catch (e) {
                 // Ignore transient network errors
@@ -1402,13 +1522,17 @@ function setupInactivityHeartbeat() {
     // Update countdown timer display every 1 second
     setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - lastUserInteraction) / 1000);
-        const remaining = Math.max(0, 600 - elapsedSec);
-        const m = Math.floor(remaining / 60);
-        const s = remaining % 60;
-        const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-        updateTimerText(formatted, remaining <= 60);
 
-        if (remaining === 0 && (state.lights.power || state.camera.enabled)) {
+        // Stage 1: WS2812B LED Auto-Off after 2 minutes (120s) - Camera stays ON
+        if (elapsedSec >= ledTimeout && state.lights.power && !ledAutoOffHandled) {
+            ledAutoOffHandled = true;
+            setMasterPower(false);
+            showToast("LED Auto-Off: Lights shut down due to 2m inactivity (Camera remains active)");
+        }
+
+        // Stage 2: Full System Shutdown after 10 minutes (600s) - Camera & system powered down
+        if (elapsedSec >= systemSleepTimeout && (state.camera.enabled || state.lights.power) && !systemSleepHandled) {
+            systemSleepHandled = true;
             setMasterPower(false);
             if (state.camera.enabled) {
                 state.camera.enabled = false;
@@ -1423,10 +1547,27 @@ function setupInactivityHeartbeat() {
                     body: JSON.stringify({ enabled: false })
                 });
             }
-            showToast("Inactivity Timeout: Automatically powered off camera and lights.");
+            showToast("Inactivity Timeout: System & camera powered down after 10m inactivity.");
+        }
+
+        // Display countdown: If lights are currently ON and haven't reached 2m, show LED countdown
+        if (state.lights.power && elapsedSec < ledTimeout) {
+            const remainingLed = Math.max(0, ledTimeout - elapsedSec);
+            const m = Math.floor(remainingLed / 60);
+            const s = remainingLed % 60;
+            const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+            updateTimerText(formatted, remainingLed <= 30, "LED Off:");
+        } else {
+            // Otherwise show system sleep countdown (10m)
+            const remainingSys = Math.max(0, systemSleepTimeout - elapsedSec);
+            const m = Math.floor(remainingSys / 60);
+            const s = remainingSys % 60;
+            const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+            updateTimerText(formatted, remainingSys <= 60, "Sleep:");
         }
     }, 1000);
 }
+
 
 
 // --- MOBILE LED OFF-CANVAS HAMBURGER DRAWER ---
@@ -1488,6 +1629,221 @@ function setupMobileLedDrawer() {
 }
 
 
+// --- OCR SECURITY PASSWORD AUTHENTICATION ---
+function setupOcrAuth() {
+    const btnOcr = document.getElementById("btnOcrCapture");
+    const modal = document.getElementById("ocrAuthModal");
+    const form = document.getElementById("ocrAuthForm");
+    const pwdInput = document.getElementById("ocrPasswordInput");
+    const btnTogglePwd = document.getElementById("btnToggleOcrPwdVisibility");
+    const eyeIcon = document.getElementById("ocrEyeIcon");
+    const errorMsg = document.getElementById("ocrErrorMsg");
+    const btnCancel = document.getElementById("btnCloseOcrModal");
+    const btnClose = document.getElementById("btnCancelOcrModal");
+    const btnSubmit = document.getElementById("btnSubmitOcrPassword");
+    const submitText = document.getElementById("ocrSubmitText");
+    const spinner = document.getElementById("ocrSpinner");
+    const modalContent = modal?.querySelector(".ocr-modal-card");
+
+    // Check if already authenticated in this session
+    if (sessionStorage.getItem("lumen_ocr_authenticated") === "true") {
+        btnOcr?.classList.add("unlocked");
+        btnOcr?.setAttribute("title", "OCR Feature Unlocked (Active)");
+    }
+
+    function openModal() {
+        if (!modal) return;
+        if (sessionStorage.getItem("lumen_ocr_authenticated") === "true") {
+            showToast("🔓 OCR Access is already unlocked for this session");
+            return;
+        }
+        if (errorMsg) {
+            errorMsg.textContent = "";
+            errorMsg.classList.remove("visible");
+        }
+        if (pwdInput) {
+            pwdInput.value = "";
+            pwdInput.type = "password";
+        }
+        modal.classList.add("active");
+        setTimeout(() => pwdInput?.focus(), 150);
+    }
+
+    function closeModal() {
+        if (!modal) return;
+        modal.classList.remove("active");
+        if (errorMsg) errorMsg.classList.remove("visible");
+    }
+
+    btnOcr?.addEventListener("click", (e) => {
+        e.preventDefault();
+        openModal();
+    });
+
+    btnCancel?.addEventListener("click", closeModal);
+    btnClose?.addEventListener("click", closeModal);
+
+    modal?.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal?.classList.contains("active")) {
+            closeModal();
+        }
+    });
+
+    // Toggle password reveal / mask
+    btnTogglePwd?.addEventListener("click", () => {
+        if (!pwdInput) return;
+        const isPwd = pwdInput.type === "password";
+        pwdInput.type = isPwd ? "text" : "password";
+        if (eyeIcon) {
+            eyeIcon.innerHTML = isPwd
+                ? '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>'
+                : '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>';
+        }
+    });
+
+    // Form submit verification
+    form?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const entered = (pwdInput?.value || "").trim();
+        if (!entered) {
+            if (errorMsg) {
+                errorMsg.textContent = "Please enter the password.";
+                errorMsg.classList.add("visible");
+            }
+            pwdInput?.focus();
+            return;
+        }
+
+        // Set loading state
+        if (btnSubmit) btnSubmit.disabled = true;
+        if (submitText) submitText.style.display = "none";
+        if (spinner) spinner.style.display = "inline-block";
+        if (errorMsg) errorMsg.classList.remove("visible");
+
+        try {
+            const res = await fetch("/api/ocr/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: entered })
+            });
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+                sessionStorage.setItem("lumen_ocr_authenticated", "true");
+                btnOcr?.classList.add("unlocked");
+                btnOcr?.setAttribute("title", "OCR Feature Unlocked (Active)");
+                closeModal();
+                showToast("🔓 OCR Access Granted! Text recognition module unlocked.");
+            } else {
+                if (errorMsg) {
+                    errorMsg.textContent = data.error || "Invalid password. Access denied.";
+                    errorMsg.classList.add("visible");
+                }
+                if (modalContent) {
+                    modalContent.classList.add("ocr-shake");
+                    setTimeout(() => modalContent.classList.remove("ocr-shake"), 400);
+                }
+                pwdInput?.select();
+            }
+        } catch (err) {
+            if (errorMsg) {
+                errorMsg.textContent = "Network error verifying password. Please try again.";
+                errorMsg.classList.add("visible");
+            }
+        } finally {
+            if (btnSubmit) btnSubmit.disabled = false;
+            if (submitText) submitText.style.display = "inline";
+            if (spinner) spinner.style.display = "none";
+        }
+    });
+
+    if (new URLSearchParams(window.location.search).has("open_ocr")) {
+        setTimeout(() => openModal(), 200);
+    }
+}
+
+
+// --- RESET TO SERVER DEFAULTS WITH POP-UP CONFIRMATION ---
+function setupResetToDefaults() {
+    const btnDesktop = document.getElementById("btnResetAllDefaults");
+    const btnMobile = document.getElementById("btnResetAllDefaultsMobile");
+    const modal = document.getElementById("confirmResetModal");
+    const btnCancel = document.getElementById("btnCancelResetModal");
+    const btnClose = document.getElementById("btnCancelResetClose");
+    const btnConfirm = document.getElementById("btnConfirmResetSubmit");
+    const spinner = document.getElementById("resetSpinner");
+
+    function openModal() {
+        if (!modal) return;
+        modal.classList.add("active");
+    }
+
+    function closeModal() {
+        if (!modal) return;
+        modal.classList.remove("active");
+    }
+
+    btnDesktop?.addEventListener("click", openModal);
+    btnMobile?.addEventListener("click", openModal);
+    btnCancel?.addEventListener("click", closeModal);
+    btnClose?.addEventListener("click", closeModal);
+
+    modal?.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal?.classList.contains("active")) {
+            closeModal();
+        }
+    });
+
+    btnConfirm?.addEventListener("click", async () => {
+        if (btnConfirm) btnConfirm.disabled = true;
+        if (spinner) spinner.style.display = "inline-block";
+
+        try {
+            // Reset hardware controls on Pi camera to factory defaults
+            if (state.camera.active_id) {
+                await fetch("/api/camera/reset_defaults", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ camera_id: state.camera.active_id })
+                }).catch(() => {});
+            }
+        } catch (e) {
+            console.warn("Could not reset camera hardware defaults:", e);
+        }
+
+        // Wipe all browser storage and cache
+        try {
+            localStorage.removeItem("lumen_zero_user_config_v2");
+            localStorage.clear();
+            sessionStorage.clear();
+            console.log("[Reset] All browser localStorage & sessionStorage caches purged.");
+        } catch (e) {
+            console.warn("[Reset] Storage purge warning:", e);
+        }
+
+        showToast("🧹 Browser cache purged! Restoring server defaults...");
+
+        // Reload page to re-initialize completely with fresh server defaults from .env
+        setTimeout(() => {
+            window.location.href = window.location.pathname;
+        }, 400);
+    });
+
+    if (new URLSearchParams(window.location.search).has("open_reset")) {
+        setTimeout(() => openModal(), 200);
+    }
+}
+
+
+
 // --- INITIALIZATION ---
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1503,6 +1859,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Bind UI listeners
     setupLightListeners();
     setupCameraListeners();
+    setupOcrAuth();
+    setupResetToDefaults();
     setupMobileLedDrawer();
     initFpsCounter();
     applyViewportTransforms();
@@ -1510,7 +1868,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // 4. Inactivity & Heartbeat tracking
     setupInactivityHeartbeat();
 
-    // 5. Initial Camera & Device discovery
+    // 5. Initial Camera & Device discovery (use pre-rendered camera list if available)
+    if (window.INITIAL_CAMERAS && window.INITIAL_CAMERAS.length > 0) {
+        applyCameraList(window.INITIAL_CAMERAS);
+    }
     refreshCameraList();
 
     // 6. Initial status query and start low-frequency heartbeat (every 6 seconds)
@@ -1520,3 +1881,4 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initial sync of RGB
     syncRgbInputs(state.lights.color.r, state.lights.color.g, state.lights.color.b);
 });
+
