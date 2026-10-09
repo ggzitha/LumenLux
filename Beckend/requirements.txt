@@ -1,0 +1,6 @@
+# Pi Zero Backend requirements
+# Built using Python standard library (http.server, fcntl, mmap, etc.)
+# Hardware dependencies already pre-installed on Raspberry Pi:
+# - adafruit-circuitpython-neopixel (or rpi_ws281x)
+# - Pillow (optional for synthetic frames: sudo apt-get install python3-pil)
+# - picamera2 (pre-installed on Raspberry Pi OS Bookworm)

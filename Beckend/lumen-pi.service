@@ -1,0 +1,16 @@
+[Unit]
+Description=Lumen-Zero Light and Camera Service for Raspberry Pi Zero W
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/Beckend
+ExecStart=/usr/bin/python3 /home/pi/Beckend/server.py --port 5000 --pin 18 --count 100
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

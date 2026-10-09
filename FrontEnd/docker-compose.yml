@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  lumen-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lumen_zero_frontend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - USER_WEB=${USER_WEB:-admin}
+      - USER_PASSWORD=${USER_PASSWORD:-raspberry}
+      - BECKEND_RPI_IP=${BECKEND_RPI_IP:-192.168.88.24}
+      - BECKEND_RPI_PORT=${BECKEND_RPI_PORT:-5000}
+      - INACTIVITY_TIME=${INACTIVITY_TIME:-600}
+      - FRONTEND_PORT=8080
+      - SECRET_KEY=${SECRET_KEY:-lumen-zero-super-secret-key-change-me}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
