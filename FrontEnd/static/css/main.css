@@ -200,29 +200,139 @@ body {
     align-items: stretch; /* Both sections have the exact same height on desktop */
 }
 
-/* Desktop Panel Equal Height Sizing */
+/* Desktop Panel Equal Height & Zero Scrollbar Sizing (100% Full-Page Zero-Scroll Layout) */
 @media (min-width: 861px) and (orientation: landscape) {
+    html, body {
+        height: 100vh !important;
+        max-height: 100vh !important;
+        overflow: hidden !important; /* Strictly no window or page scrollbars on desktop */
+    }
+    .app-header {
+        height: 50px !important;
+        min-height: 50px !important;
+        max-height: 50px !important;
+        padding: 0 1.25rem !important;
+    }
     .dashboard-container {
-        align-items: stretch;
+        height: calc(100vh - 62px) !important;
+        max-height: calc(100vh - 62px) !important;
+        margin: 0.35rem auto 0 !important;
+        padding: 0 1.25rem 0.35rem !important;
+        gap: 1rem !important;
+        overflow: hidden !important;
+        align-items: stretch !important;
     }
     .camera-panel {
         display: flex;
         flex-direction: column;
+        height: 100% !important;
+        max-height: 100% !important;
+        overflow: hidden !important;
+        padding: 0.75rem 1rem !important;
+    }
+    .camera-panel .panel-header {
+        margin-bottom: 0.35rem;
+        padding-bottom: 0.25rem;
+    }
+    .viewport-card {
+        flex: 1;
+        min-height: 0;
+        max-height: calc(100% - 65px);
+        aspect-ratio: auto !important; /* Scale naturally inside the container */
+    }
+    .viewport-toolbar {
+        margin-top: 0.35rem !important;
     }
     .lights-panel {
         display: flex;
         flex-direction: column;
-        overflow-y: auto;
-        max-height: 100%;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(0, 242, 254, 0.25) transparent;
+        overflow-y: hidden !important; /* Zero scrollbar on desktop: everything fits */
+        overflow-x: hidden !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        padding: 0.75rem 1rem !important;
     }
-    .lights-panel::-webkit-scrollbar {
-        width: 5px;
+    .lights-panel .panel-header {
+        margin-bottom: 0.35rem;
+        padding-bottom: 0.25rem;
     }
-    .lights-panel::-webkit-scrollbar-thumb {
-        background: rgba(0, 242, 254, 0.3);
-        border-radius: 4px;
+    .lights-panel .led-master-card {
+        padding: 0.35rem 0.75rem;
+        margin-bottom: 0.35rem;
+    }
+    .lights-panel .led-master-card h3 {
+        font-size: 0.82rem !important;
+    }
+    .lights-panel .led-master-card p {
+        font-size: 0.65rem !important;
+    }
+    .lights-panel .led-strip-preview-wrapper {
+        margin: 0.35rem 0;
+        padding: 0.35rem 0.65rem;
+    }
+    .lights-panel .led-strip-title {
+        font-size: 0.66rem;
+        margin-bottom: 0.25rem;
+    }
+    .lights-panel .virtual-led-strip {
+        padding: 2px 0;
+        gap: 3px;
+        overflow: hidden;
+    }
+    .lights-panel .virtual-led-node {
+        width: 8px;
+        height: 8px;
+    }
+    .lights-panel .combined-color-card {
+        padding: 4px 8px;
+        margin-bottom: 0.35rem;
+        gap: 2px;
+    }
+    .lights-panel .color-wheel-canvas-container {
+        width: 105px;
+        height: 105px;
+        max-width: 105px;
+        max-height: 105px;
+    }
+    .lights-panel #reinventedColorWheel {
+        width: 105px;
+        height: 105px;
+        max-width: 105px;
+        max-height: 105px;
+    }
+    .lights-panel .wheel-values-row {
+        font-size: 0.66rem;
+        padding-top: 2px;
+    }
+    .lights-panel .field-group {
+        gap: 0.15rem;
+        margin-bottom: 0.35rem !important;
+    }
+    .lights-panel .rgb-channels-grid {
+        gap: 4px;
+        margin-bottom: 0.35rem;
+    }
+    .lights-panel .rgb-box {
+        padding: 3px 5px;
+        gap: 2px;
+    }
+    .lights-panel .rgb-title {
+        font-size: 0.65rem;
+    }
+    .lights-panel .rgb-input-number {
+        font-size: 0.72rem;
+        padding: 1px 3px;
+        width: 36px;
+    }
+    .lights-panel .fx-controls-grid {
+        display: grid;
+        grid-template-columns: 1.35fr 1fr;
+        gap: 8px;
+        align-items: flex-end;
+    }
+    .lights-panel .select-custom {
+        padding: 0.38rem 0.55rem;
+        font-size: 0.75rem;
     }
 }
 
@@ -640,6 +750,18 @@ body {
     }
 }
 
+.fx-controls-grid {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    gap: 8px;
+    align-items: flex-end;
+}
+@media (max-width: 600px) {
+    .fx-controls-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .field-group {
     display: flex;
     flex-direction: column;
@@ -674,6 +796,17 @@ body {
 .select-custom:focus, .input-custom:focus {
     border-color: var(--neon-cyan);
     box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.15);
+}
+
+/* Remove native spin button arrows from number inputs across all browsers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+}
+input[type="number"] {
+    -moz-appearance: textfield !important;
+    appearance: textfield !important;
 }
 
 /* Sliders */
@@ -773,77 +906,112 @@ input:checked + .switch-slider:before {
 
 .virtual-led-strip {
     display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    padding: 6px 2px;
-    scrollbar-width: thin;
+    justify-content: space-between;
+    align-items: center;
+    gap: 3px;
+    overflow: hidden; /* Strictly zero horizontal scrollbar */
+    padding: 2px 0;
+    width: 100%;
 }
 
 .virtual-led-node {
-    flex-shrink: 0;
-    width: 12px;
-    height: 12px;
+    flex: 1;
+    max-width: 9px;
+    height: 9px;
     border-radius: 50%;
     background-color: #ffffff;
-    box-shadow: 0 0 8px #ffffff;
+    box-shadow: 0 0 6px #ffffff;
     transition: background-color 0.1s linear, box-shadow 0.1s linear;
 }
 
-/* Preset Buttons (5 items: White, Warm White, Red, Green, Blue) */
-.preset-buttons-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 6px;
-    margin-bottom: 1rem;
+/* ==========================================================================
+   Combined Color Control: Left & Right Presets + Radiant Center Wheel
+   ========================================================================== */
+.combined-color-card {
+    background: rgba(13, 19, 33, 0.65);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    margin-bottom: 0.4rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.3);
 }
 
-.btn-preset {
-    padding: 8px 4px;
+.color-picker-composite-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+    margin: 2px 0;
+}
+
+.preset-column {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 65px;
+}
+
+.preset-column .btn-preset {
+    width: 100%;
+    padding: 4px 6px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-subtle);
     background: rgba(255, 255, 255, 0.04);
     color: var(--text-primary);
-    font-size: 0.74rem;
-    font-weight: 700;
+    font-size: 0.68rem;
+    font-weight: 600;
     cursor: pointer;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    gap: 5px;
+    justify-content: flex-start;
+    gap: 6px;
     transition: var(--transition);
 }
-.preset-swatch {
-    width: 20px;
-    height: 20px;
+
+.preset-column .preset-swatch {
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
-.btn-preset:hover {
-    background: rgba(255, 255, 255, 0.1);
-    transform: translateY(-2px);
+
+.preset-column .btn-preset:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: scale(1.02);
 }
-.btn-preset.active {
+
+.preset-column .btn-preset.active {
     border-color: var(--neon-cyan);
     background: rgba(0, 242, 254, 0.15);
-    box-shadow: 0 0 12px rgba(0, 242, 254, 0.2);
+    box-shadow: 0 0 8px rgba(0, 242, 254, 0.25);
 }
+
 
 /* RGB Channels Matrix */
 .rgb-channels-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    margin-bottom: 1.25rem;
+    gap: 6px;
+    margin-bottom: 0.45rem;
 }
 
 .rgb-box {
-    padding: 0.85rem;
+    padding: 4px 6px;
     background: rgba(10, 15, 26, 0.6);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 3px;
 }
 .rgb-box.red-border { border-top: 3px solid var(--neon-red); }
 .rgb-box.green-border { border-top: 3px solid var(--neon-green); }
@@ -1192,26 +1360,96 @@ input:checked + .switch-slider:before {
     pointer-events: auto;
 }
 
-/* Mobile & Portrait Screens: Right-Side Drawer (Same as Desktop, NOT on bottom) */
+/* Mobile & Portrait Screens: Right-Side Drawer (Wider for Sliders, Smaller Badges, 4x2 Toolbar Grid) */
 @media (max-width: 768px), (orientation: portrait) {
     .camera-settings-overlay {
         top: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
         left: auto !important;
-        width: 62% !important;
-        min-width: 220px !important;
-        max-width: 320px !important;
+        width: 86% !important; /* Wider on mobile so zoom, pan, tilt sliders fit comfortably */
+        min-width: 280px !important;
+        max-width: 380px !important;
         height: 100% !important;
-        border-left: 1px solid rgba(0, 242, 254, 0.35) !important;
+        border-left: 1px solid rgba(0, 242, 254, 0.4) !important;
         border-top: none !important;
         transform: translateX(100%) !important;
-        box-shadow: -10px 0 30px rgba(0, 0, 0, 0.7) !important;
+        box-shadow: -15px 0 35px rgba(0, 0, 0, 0.85) !important;
+        background: rgba(8, 13, 24, 0.75) !important;
+        backdrop-filter: blur(4px) !important;
+        -webkit-backdrop-filter: blur(4px) !important;
     }
     .camera-settings-overlay.open {
         transform: translateX(0) !important;
         opacity: 1 !important;
         pointer-events: auto !important;
+    }
+
+    /* Smaller camera name, FPS and settings button on mobile */
+    .viewport-overlay-top {
+        top: 6px !important;
+        left: 6px !important;
+        right: 6px !important;
+        gap: 4px !important;
+    }
+    .overlay-chip {
+        padding: 2px 6px !important;
+        font-size: 0.65rem !important;
+        border-radius: 10px !important;
+        gap: 4px !important;
+    }
+    .overlay-chip.stream-badge {
+        max-width: 120px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    .overlay-chip.fps-counter {
+        padding: 2px 5px !important;
+        font-size: 0.65rem !important;
+    }
+    .overlay-btn-settings {
+        padding: 2px 7px !important;
+        font-size: 0.65rem !important;
+        gap: 3px !important;
+        border-radius: 10px !important;
+    }
+    .overlay-btn-settings svg {
+        width: 11px !important;
+        height: 11px !important;
+    }
+
+    /* 4x2 Grid for buttons below camera frame on mobile */
+    .viewport-toolbar {
+        display: grid !important;
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 5px !important;
+        margin-top: 0.5rem !important;
+    }
+    .viewport-toolbar .btn-icon {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 5px 2px !important;
+        font-size: 0.65rem !important;
+        gap: 3px !important;
+        text-align: center !important;
+        min-height: 42px !important;
+        width: 100% !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+    }
+    .viewport-toolbar .btn-icon svg {
+        width: 13px !important;
+        height: 13px !important;
+        flex-shrink: 0 !important;
+    }
+    .viewport-toolbar .btn-icon span {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        font-size: 0.65rem !important;
     }
 }
 
@@ -1365,10 +1603,10 @@ input:checked + .switch-slider:before {
 
 .color-wheel-canvas-container {
     position: relative;
-    width: 150px;
-    height: 150px;
-    max-width: 150px;
-    max-height: 150px;
+    width: 110px;
+    height: 110px;
+    max-width: 110px;
+    max-height: 110px;
     aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
@@ -1380,10 +1618,10 @@ input:checked + .switch-slider:before {
 }
 
 #reinventedColorWheel {
-    width: 150px;
-    height: 150px;
-    max-width: 150px;
-    max-height: 150px;
+    width: 110px;
+    height: 110px;
+    max-width: 110px;
+    max-height: 110px;
     border-radius: 50%;
     cursor: crosshair;
     display: block;
@@ -1401,49 +1639,96 @@ input:checked + .switch-slider:before {
     border-top: 1px dashed rgba(255, 255, 255, 0.08);
 }
 
-/* Compact layout for inside the Camera Overlay Drawer */
+/* Compact layout for inside the Camera Overlay Drawer (Ensures prominent, wide sliders) */
 .camera-settings-overlay .cam-overlay-body {
-    padding: 12px 14px;
-    gap: 12px;
+    padding: 8px 10px;
+    gap: 8px;
+}
+.camera-settings-overlay .overlay-quick-config {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 6px 8px;
+    background: rgba(10, 15, 26, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.camera-settings-overlay .overlay-quick-config .field-group {
+    gap: 2px;
+}
+.camera-settings-overlay .overlay-quick-config .field-label {
+    font-size: 0.68rem;
+}
+.camera-settings-overlay .overlay-quick-config .select-custom {
+    padding: 4px 6px;
+    font-size: 0.72rem;
+}
+.camera-settings-overlay .props-tab-bar {
+    display: flex;
+    background: rgba(10, 15, 26, 0.45);
+    padding: 2px;
+    gap: 2px;
+    margin-bottom: 2px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+.camera-settings-overlay .props-tab-btn {
+    flex: 1;
+    padding: 5px 4px;
+    font-size: 0.68rem;
+    white-space: nowrap;
+    text-align: center;
+}
+.camera-settings-overlay .props-tab-content {
+    padding: 6px 2px;
 }
 .camera-settings-overlay .props-table-header,
 .camera-settings-overlay .props-row {
-    grid-template-columns: 88px 1fr 48px 36px;
-    gap: 6px;
-}
-.camera-settings-overlay .props-tab-content {
-    padding: 10px 8px;
+    grid-template-columns: 62px 1fr 40px 24px;
+    gap: 5px;
+    align-items: center;
 }
 .camera-settings-overlay .props-label {
-    font-size: 0.76rem;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .camera-settings-overlay .props-num-input {
-    font-size: 0.74rem;
+    font-size: 0.7rem;
     padding: 2px 2px;
+    width: 40px;
+    text-align: center;
+    border-radius: 4px;
 }
-.camera-settings-overlay .overlay-quick-config {
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 8px;
-    padding: 8px 10px;
-    background: rgba(10, 15, 26, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+.camera-settings-overlay .slider-custom {
+    display: block !important;
+    width: 100% !important;
+    min-width: 50px !important;
+    height: 6px !important;
+    margin: 4px 0 !important;
+    cursor: pointer !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+}
+.camera-settings-overlay .slider-custom::-webkit-slider-thumb {
+    width: 16px !important;
+    height: 16px !important;
+    border-radius: 50% !important;
+    background: var(--neon-cyan) !important;
+    box-shadow: 0 0 8px var(--neon-cyan) !important;
 }
 .camera-settings-overlay .props-table-header {
-    background: rgba(10, 15, 26, 0.45);
+    background: rgba(10, 15, 26, 0.55);
     border-radius: 4px;
-    padding: 4px 6px;
+    padding: 3px 6px;
 }
 .camera-settings-overlay .props-row {
-    background: rgba(10, 15, 26, 0.25);
+    background: rgba(10, 15, 26, 0.35);
     border-radius: 6px;
     padding: 3px 6px;
 }
-.camera-settings-overlay .props-tab-bar {
-    background: rgba(10, 15, 26, 0.35);
-}
 .camera-settings-overlay .props-footer {
-    background: rgba(10, 15, 26, 0.35);
-    padding: 8px 10px;
+    background: rgba(10, 15, 26, 0.4);
+    padding: 6px 8px;
     border-radius: var(--radius-sm);
 }
 

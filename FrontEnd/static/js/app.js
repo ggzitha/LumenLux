@@ -10,8 +10,8 @@ const state = {
     lights: {
         power: true,
         color: { r: 255, g: 255, b: 255, hex: "#ffffff" },
-        brightness: 1.0,
-        brightness_pct: 100,
+        brightness: 0.45,
+        brightness_pct: 45,
         effect: "static",
         speed: 50
     },
@@ -107,7 +107,7 @@ function initVirtualLedStrip() {
     const container = document.getElementById("virtualLedStrip");
     if (!container) return;
     container.innerHTML = "";
-    const NODE_COUNT = 36; // Visual simulator nodes
+    const NODE_COUNT = 24; // Clean responsive visual nodes that never overflow
     for (let i = 0; i < NODE_COUNT; i++) {
         const node = document.createElement("div");
         node.className = "virtual-led-node";
@@ -622,9 +622,10 @@ function setupLightListeners() {
         });
     });
 
-    // Presets (White, Warm White, Red, Green, Blue)
+    // Presets (Left: White, Warm White, Yellow | Right: Red, Green, Blue)
     document.getElementById("presetWhite")?.addEventListener("click", () => syncRgbInputs(255, 255, 255, false));
     document.getElementById("presetWarmWhite")?.addEventListener("click", () => syncRgbInputs(255, 214, 164, false));
+    document.getElementById("presetYellow")?.addEventListener("click", () => syncRgbInputs(255, 234, 0, false));
     document.getElementById("presetRed")?.addEventListener("click", () => syncRgbInputs(255, 0, 0, false));
     document.getElementById("presetGreen")?.addEventListener("click", () => syncRgbInputs(0, 255, 0, false));
     document.getElementById("presetBlue")?.addEventListener("click", () => syncRgbInputs(0, 0, 255, false));
@@ -892,6 +893,9 @@ function setupCameraListeners() {
     document.getElementById("btnRefreshCams")?.addEventListener("click", () => {
         refreshCameraList();
         showToast("Scanning for USB and CSI cameras...");
+    });
+    document.getElementById("btnOcrCapture")?.addEventListener("click", () => {
+        showToast("OCR Text Recognition mode initialized");
     });
 
     // Camera Enable / Disable Toggle with state synchronization and rapid click protection

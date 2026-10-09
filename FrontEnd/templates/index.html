@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=2.9">
+    <link rel="stylesheet" href="/static/css/main.css?v=3.1">
 </head>
 <body>
     <div class="ambient-sphere sphere-1"></div>
@@ -146,49 +146,11 @@
                     </div>
 
                     <div class="cam-overlay-body">
-                        <!-- Stream Quick Configuration Grid -->
-                        <div class="overlay-quick-config">
-                            <div class="field-group">
-                                <label class="field-label" for="cameraSelect">Selected Camera</label>
-                                <select id="cameraSelect" class="select-custom">
-                                    <option value="detecting">Loading cameras...</option>
-                                </select>
-                            </div>
-
-                            <div class="field-group">
-                                <label class="field-label" for="resolutionSelect">Stream Resolution</label>
-                                <select id="resolutionSelect" class="select-custom">
-                                    <option value="320x240">320 x 240 (Low Bandwidth)</option>
-                                    <option value="640x480">640 x 480 (SD 4:3)</option>
-                                    <option value="1280x720">1280 x 720 (HD 720p 16:9)</option>
-                                    <option value="1920x1080" selected>1920 x 1080 (Full HD 1080p 16:9)</option>
-                                </select>
-                            </div>
-
-                            <div class="field-group">
-                                <label class="field-label" for="fpsSelect">Target Frame Rate</label>
-                                <select id="fpsSelect" class="select-custom">
-                                    <option value="5">5 FPS (Ultra Low Power)</option>
-                                    <option value="10">10 FPS (Energy Saver)</option>
-                                    <option value="15">15 FPS (Balanced)</option>
-                                    <option value="20">20 FPS</option>
-                                    <option value="30" selected>30 FPS (High Performance)</option>
-                                </select>
-                            </div>
-
-                            <div class="field-group">
-                                <label class="field-label" for="digitalZoomSlider">
-                                    Digital Zoom
-                                    <span class="field-val-badge" id="digitalZoomBadge">1.0x</span>
-                                </label>
-                                <input type="range" id="digitalZoomSlider" class="slider-custom" min="1.0" max="3.0" step="0.1" value="1.0">
-                            </div>
-                        </div>
-
-                        <!-- Hardware Property Tabs -->
+                        <!-- Hardware Property & Stream Configuration Tabs -->
                         <div class="props-tab-bar">
                             <button type="button" class="props-tab-btn active" id="tabBtnCamCtrl" data-tab="tabCamCtrl">Camera Control</button>
                             <button type="button" class="props-tab-btn" id="tabBtnVpa" data-tab="tabVpa">Video Proc Amp</button>
+                            <button type="button" class="props-tab-btn" id="tabBtnStreamCfg" data-tab="tabStreamCfg">Stream Config</button>
                         </div>
 
                         <!-- Tab 1: Camera Control -->
@@ -366,40 +328,100 @@
                                 <button type="button" class="btn-default-reset" id="btnResetVpaDefaults">Default</button>
                             </div>
                         </div>
+
+                        <!-- Tab 3: Stream Quick Configuration -->
+                        <div class="props-tab-content" id="tabStreamCfg">
+                            <div class="overlay-quick-config">
+                                <div class="field-group">
+                                    <label class="field-label" for="cameraSelect">Selected Camera</label>
+                                    <select id="cameraSelect" class="select-custom">
+                                        <option value="detecting">Loading cameras...</option>
+                                    </select>
+                                </div>
+
+                                <div class="field-group">
+                                    <label class="field-label" for="resolutionSelect">Stream Resolution</label>
+                                    <select id="resolutionSelect" class="select-custom">
+                                        <option value="320x240">320 x 240 (Low Bandwidth)</option>
+                                        <option value="640x480">640 x 480 (SD 4:3)</option>
+                                        <option value="1280x720">1280 x 720 (HD 720p 16:9)</option>
+                                        <option value="1920x1080" selected>1920 x 1080 (Full HD 1080p 16:9)</option>
+                                    </select>
+                                </div>
+
+                                <div class="field-group">
+                                    <label class="field-label" for="fpsSelect">Target Frame Rate</label>
+                                    <select id="fpsSelect" class="select-custom">
+                                        <option value="5">5 FPS (Ultra Low Power)</option>
+                                        <option value="10">10 FPS (Energy Saver)</option>
+                                        <option value="15">15 FPS (Balanced)</option>
+                                        <option value="20">20 FPS</option>
+                                        <option value="30" selected>30 FPS (High Performance)</option>
+                                    </select>
+                                </div>
+
+                                <div class="field-group">
+                                    <label class="field-label" for="digitalZoomSlider">
+                                        Digital Zoom
+                                        <span class="field-val-badge" id="digitalZoomBadge">1.0x</span>
+                                    </label>
+                                    <input type="range" id="digitalZoomSlider" class="slider-custom" min="1.0" max="3.0" step="0.1" value="1.0">
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Quick Viewport Toolbar -->
+            <!-- Quick Viewport Toolbar (Desktop flex row, Mobile 4x2 grid) -->
             <div class="viewport-toolbar">
-                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-                    <button class="btn-icon" id="btnToggleCamera" title="Toggle camera capture">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
-                        </svg>
-                        <span>Disable Cam</span>
-                    </button>
-                    <button class="btn-icon" id="btnSnapshot" title="Capture high-resolution snapshot">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                        </svg>
-                        Snapshot
-                    </button>
-                    <button class="btn-icon" id="btnToolbarSettings" title="Toggle Pro Camera Settings Overlay">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-                        </svg>
-                        <span>Cam Settings</span>
-                    </button>
-                    <button class="btn-icon" id="btnFlipH" title="Flip Horizontal">Flip H</button>
-                    <button class="btn-icon" id="btnFlipV" title="Flip Vertical">Flip V</button>
-                    <button class="btn-icon" id="btnToggleGrid" title="Toggle framing grid">Grid</button>
-                </div>
+                <button class="btn-icon" id="btnToggleCamera" title="Toggle camera capture">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+                    </svg>
+                    <span>Disable Cam</span>
+                </button>
+                <button class="btn-icon" id="btnSnapshot" title="Capture high-resolution snapshot">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                    </svg>
+                    <span>Snapshot</span>
+                </button>
+                <button class="btn-icon" id="btnToolbarSettings" title="Toggle Pro Camera Settings Overlay">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                    </svg>
+                    <span>Settings</span>
+                </button>
                 <button class="btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
                     </svg>
-                    Fullscreen
+                    <span>Fullscreen</span>
+                </button>
+                <button class="btn-icon" id="btnFlipH" title="Flip Horizontal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/>
+                    </svg>
+                    <span>Flip H</span>
+                </button>
+                <button class="btn-icon" id="btnFlipV" title="Flip Vertical">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm6 14.01V10h-2v7.01H10L15 21l4-3.99h-3z"/>
+                    </svg>
+                    <span>Flip V</span>
+                </button>
+                <button class="btn-icon" id="btnToggleGrid" title="Toggle framing grid">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 20H4v-4h4v4zm0-6H4v-4h4v4zm0-6H4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4z"/>
+                    </svg>
+                    <span>Grid</span>
+                </button>
+                <button class="btn-icon" id="btnOcrCapture" title="OCR Text Recognition">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2zM7 11h10v2H7zm2-3h6v2H9zm-1 6h8v2H8z"/>
+                    </svg>
+                    <span>OCR</span>
                 </button>
             </div>
         </section>
@@ -459,10 +481,10 @@
                 </div>
             </div>
 
-            <!-- Real-time Virtual LED Strip Simulator -->
+            <!-- Real-time Virtual LED Strip Simulator (Clean fit without horizontal scrollbar) -->
             <div class="led-strip-preview-wrapper">
                 <div class="led-strip-title">
-                    <span>Virtual Strip Simulator (100 LEDs)</span>
+                    <span>Virtual Strip Simulator</span>
                     <span id="colorHexDisplay">#FFFFFF</span>
                 </div>
                 <div class="virtual-led-strip" id="virtualLedStrip">
@@ -470,58 +492,68 @@
                 </div>
             </div>
 
-            <!-- Color Presets Grid (Positioned on top of the color wheel) -->
-            <div class="field-group" style="margin-bottom: 0.4rem;">
-                <label class="field-label">Color Presets</label>
-            </div>
-            <div class="preset-buttons-grid">
-                <button class="btn-preset active" id="presetWhite" type="button" title="Cool White">
-                    <span class="preset-swatch" style="background-color: #ffffff; box-shadow: 0 0 8px #ffffff;"></span>
-                    <span>White</span>
-                </button>
-                <button class="btn-preset" id="presetWarmWhite" type="button" title="Warm White (3000K)">
-                    <span class="preset-swatch" style="background-color: #ffd6a4; box-shadow: 0 0 8px #ffd6a4;"></span>
-                    <span>Warm</span>
-                </button>
-                <button class="btn-preset" id="presetRed" type="button" title="Pure Red">
-                    <span class="preset-swatch" style="background-color: #ef4444; box-shadow: 0 0 8px #ef4444;"></span>
-                    <span>Red</span>
-                </button>
-                <button class="btn-preset" id="presetGreen" type="button" title="Pure Green">
-                    <span class="preset-swatch" style="background-color: #10b981; box-shadow: 0 0 8px #10b981;"></span>
-                    <span>Green</span>
-                </button>
-                <button class="btn-preset" id="presetBlue" type="button" title="Pure Blue">
-                    <span class="preset-swatch" style="background-color: #3b82f6; box-shadow: 0 0 8px #3b82f6;"></span>
-                    <span>Blue</span>
-                </button>
-            </div>
-
-            <!-- Embedded Precise Hex Color Wheel (Compact Reinvented Style) -->
-            <div class="color-wheel-card">
+            <!-- Combined Color Control: Presets (Left: White, Warm, Yellow | Right: Red, Green, Blue) + Radiant Color Wheel (Center) -->
+            <div class="color-wheel-card combined-color-card">
                 <div class="color-wheel-header">
-                    <span class="color-wheel-title">Precise Color Wheel</span>
+                    <span class="color-wheel-title">Precise Color Studio</span>
                     <div class="wheel-hex-input-wrapper" id="wheelHexWrapper" title="Click to type Hex (e.g. 00CC00)">
                         <span class="wheel-hex-hash">#</span>
                         <input type="text" id="wheelHexBadge" class="wheel-hex-badge-input" value="FFFFFF" maxlength="6" spellcheck="false" autocomplete="off" placeholder="FFFFFF">
                     </div>
                 </div>
-                <div class="color-wheel-canvas-container">
-                    <canvas id="reinventedColorWheel" width="150" height="150"></canvas>
+
+                <div class="color-picker-composite-row">
+                    <!-- Left Column: White, Warm, Yellow -->
+                    <div class="preset-column preset-col-left">
+                        <button class="btn-preset active" id="presetWhite" type="button" title="Cool White">
+                            <span class="preset-swatch" style="background-color: #ffffff; box-shadow: 0 0 6px #ffffff;"></span>
+                            <span>White</span>
+                        </button>
+                        <button class="btn-preset" id="presetWarmWhite" type="button" title="Warm White (3000K)">
+                            <span class="preset-swatch" style="background-color: #ffd6a4; box-shadow: 0 0 6px #ffd6a4;"></span>
+                            <span>Warm</span>
+                        </button>
+                        <button class="btn-preset" id="presetYellow" type="button" title="Pure Yellow">
+                            <span class="preset-swatch" style="background-color: #ffea00; box-shadow: 0 0 6px #ffea00;"></span>
+                            <span>Yellow</span>
+                        </button>
+                    </div>
+
+                    <!-- Center: Radiant Color Wheel -->
+                    <div class="color-wheel-canvas-container">
+                        <canvas id="reinventedColorWheel" width="150" height="150"></canvas>
+                    </div>
+
+                    <!-- Right Column: Red, Green, Blue -->
+                    <div class="preset-column preset-col-right">
+                        <button class="btn-preset" id="presetRed" type="button" title="Pure Red">
+                            <span class="preset-swatch" style="background-color: #ef4444; box-shadow: 0 0 6px #ef4444;"></span>
+                            <span>Red</span>
+                        </button>
+                        <button class="btn-preset" id="presetGreen" type="button" title="Pure Green">
+                            <span class="preset-swatch" style="background-color: #10b981; box-shadow: 0 0 6px #10b981;"></span>
+                            <span>Green</span>
+                        </button>
+                        <button class="btn-preset" id="presetBlue" type="button" title="Pure Blue">
+                            <span class="preset-swatch" style="background-color: #3b82f6; box-shadow: 0 0 6px #3b82f6;"></span>
+                            <span>Blue</span>
+                        </button>
+                    </div>
                 </div>
+
                 <div class="wheel-values-row">
                     <span id="wheelHsvDisplay">H: 0° S: 0% V: 100%</span>
                     <span id="wheelRgbDisplay">RGB(255, 255, 255)</span>
                 </div>
             </div>
 
-            <!-- Master Brightness Slider -->
-            <div class="field-group" style="margin-bottom: 1.25rem;">
+            <!-- Master Brightness Slider (Default 45%) -->
+            <div class="field-group" style="margin-bottom: 0.4rem;">
                 <label class="field-label" for="brightnessSlider">
                     Strip Brightness
-                    <span class="field-val-badge" id="brightnessValBadge">100%</span>
+                    <span class="field-val-badge" id="brightnessValBadge">45%</span>
                 </label>
-                <input type="range" id="brightnessSlider" class="slider-custom" min="0" max="100" value="100">
+                <input type="range" id="brightnessSlider" class="slider-custom" min="0" max="100" value="45">
             </div>
 
             <!-- Custom RGB Channels & Numbers -->
@@ -557,78 +589,79 @@
                 </div>
             </div>
 
-            <!-- Dynamic Effects (Full 56 WS2812FX Suite) -->
-            <div class="field-group" style="margin-bottom: 1rem;">
-                <label class="field-label" for="effectSelect">
-                    Lighting Effect (WS2812FX — 56 Effects)
-                </label>
-                <select id="effectSelect" class="select-custom">
-                    <option value="static" selected>1. Static (Solid Color - Default)</option>
-                    <option value="blink">2. Blink</option>
-                    <option value="breath">3. Breath / Breathing</option>
-                    <option value="color_wipe">4. Color Wipe</option>
-                    <option value="color_wipe_random">5. Color Wipe Random</option>
-                    <option value="random_color">6. Random Color</option>
-                    <option value="single_dynamic">7. Single Dynamic</option>
-                    <option value="multi_dynamic">8. Multi Dynamic</option>
-                    <option value="rainbow">9. Rainbow</option>
-                    <option value="rainbow_cycle">10. Rainbow Cycle</option>
-                    <option value="scan">11. Scan</option>
-                    <option value="dual_scan">12. Dual Scan</option>
-                    <option value="fade">13. Fade</option>
-                    <option value="theater_chase">14. Theater Chase</option>
-                    <option value="theater_chase_rainbow">15. Theater Chase Rainbow</option>
-                    <option value="running_lights">16. Running Lights</option>
-                    <option value="twinkle">17. Twinkle</option>
-                    <option value="twinkle_random">18. Twinkle Random</option>
-                    <option value="twinkle_fade">19. Twinkle Fade</option>
-                    <option value="twinkle_fade_random">20. Twinkle Fade Random</option>
-                    <option value="sparkle">21. Sparkle</option>
-                    <option value="flash_sparkle">22. Flash Sparkle</option>
-                    <option value="hyper_sparkle">23. Hyper Sparkle</option>
-                    <option value="strobe">24. Strobe</option>
-                    <option value="strobe_rainbow">25. Strobe Rainbow</option>
-                    <option value="multi_strobe">26. Multi Strobe</option>
-                    <option value="blink_rainbow">27. Blink Rainbow</option>
-                    <option value="chase_white">28. Chase White</option>
-                    <option value="chase_color">29. Chase Color</option>
-                    <option value="chase_random">30. Chase Random</option>
-                    <option value="chase_rainbow">31. Chase Rainbow</option>
-                    <option value="chase_flash">32. Chase Flash</option>
-                    <option value="chase_flash_random">33. Chase Flash Random</option>
-                    <option value="chase_rainbow_white">34. Chase Rainbow White</option>
-                    <option value="chase_blackout">35. Chase Blackout</option>
-                    <option value="chase_blackout_rainbow">36. Chase Blackout Rainbow</option>
-                    <option value="color_sweep_random">37. Color Sweep Random</option>
-                    <option value="running_color">38. Running Color</option>
-                    <option value="running_red_blue">39. Running Red Blue</option>
-                    <option value="running_random">40. Running Random</option>
-                    <option value="larson_scanner">41. Larson Scanner (Cylon)</option>
-                    <option value="comet">42. Comet</option>
-                    <option value="fireworks">43. Fireworks</option>
-                    <option value="fireworks_random">44. Fireworks Random</option>
-                    <option value="merry_christmas">45. Merry Christmas</option>
-                    <option value="fire_flicker">46. Fire Flicker</option>
-                    <option value="fire_soft">47. Fire Soft</option>
-                    <option value="dual_color_wave">48. Dual Color Wave</option>
-                    <option value="circulating">49. Circulating</option>
-                    <option value="tricolor_wipe">50. Tricolor Wipe</option>
-                    <option value="icu">51. ICU</option>
-                    <option value="multi_comet">52. Multi Comet</option>
-                    <option value="dual_larson_scanner">53. Dual Larson Scanner</option>
-                    <option value="random_chase">54. Random Chase</option>
-                    <option value="oscillate">55. Oscillate</option>
-                    <option value="pride_2015">56. Pride 2015</option>
-                </select>
-            </div>
+            <!-- Dynamic Effects (Full 56 WS2812FX Suite) & Speed Grid -->
+            <div class="fx-controls-grid">
+                <div class="field-group">
+                    <label class="field-label" for="effectSelect">
+                        Lighting Effect (56 FX)
+                    </label>
+                    <select id="effectSelect" class="select-custom">
+                        <option value="static" selected>1. Static (Solid Color - Default)</option>
+                        <option value="blink">2. Blink</option>
+                        <option value="breath">3. Breath / Breathing</option>
+                        <option value="color_wipe">4. Color Wipe</option>
+                        <option value="color_wipe_random">5. Color Wipe Random</option>
+                        <option value="random_color">6. Random Color</option>
+                        <option value="single_dynamic">7. Single Dynamic</option>
+                        <option value="multi_dynamic">8. Multi Dynamic</option>
+                        <option value="rainbow">9. Rainbow</option>
+                        <option value="rainbow_cycle">10. Rainbow Cycle</option>
+                        <option value="scan">11. Scan</option>
+                        <option value="dual_scan">12. Dual Scan</option>
+                        <option value="fade">13. Fade</option>
+                        <option value="theater_chase">14. Theater Chase</option>
+                        <option value="theater_chase_rainbow">15. Theater Chase Rainbow</option>
+                        <option value="running_lights">16. Running Lights</option>
+                        <option value="twinkle">17. Twinkle</option>
+                        <option value="twinkle_random">18. Twinkle Random</option>
+                        <option value="twinkle_fade">19. Twinkle Fade</option>
+                        <option value="twinkle_fade_random">20. Twinkle Fade Random</option>
+                        <option value="sparkle">21. Sparkle</option>
+                        <option value="flash_sparkle">22. Flash Sparkle</option>
+                        <option value="hyper_sparkle">23. Hyper Sparkle</option>
+                        <option value="strobe">24. Strobe</option>
+                        <option value="strobe_rainbow">25. Strobe Rainbow</option>
+                        <option value="multi_strobe">26. Multi Strobe</option>
+                        <option value="blink_rainbow">27. Blink Rainbow</option>
+                        <option value="chase_white">28. Chase White</option>
+                        <option value="chase_color">29. Chase Color</option>
+                        <option value="chase_random">30. Chase Random</option>
+                        <option value="chase_rainbow">31. Chase Rainbow</option>
+                        <option value="chase_flash">32. Chase Flash</option>
+                        <option value="chase_flash_random">33. Chase Flash Random</option>
+                        <option value="chase_rainbow_white">34. Chase Rainbow White</option>
+                        <option value="chase_blackout">35. Chase Blackout</option>
+                        <option value="chase_blackout_rainbow">36. Chase Blackout Rainbow</option>
+                        <option value="color_sweep_random">37. Color Sweep Random</option>
+                        <option value="running_color">38. Running Color</option>
+                        <option value="running_red_blue">39. Running Red Blue</option>
+                        <option value="running_random">40. Running Random</option>
+                        <option value="larson_scanner">41. Larson Scanner (Cylon)</option>
+                        <option value="comet">42. Comet</option>
+                        <option value="fireworks">43. Fireworks</option>
+                        <option value="fireworks_random">44. Fireworks Random</option>
+                        <option value="merry_christmas">45. Merry Christmas</option>
+                        <option value="fire_flicker">46. Fire Flicker</option>
+                        <option value="fire_soft">47. Fire Soft</option>
+                        <option value="dual_color_wave">48. Dual Color Wave</option>
+                        <option value="circulating">49. Circulating</option>
+                        <option value="tricolor_wipe">50. Tricolor Wipe</option>
+                        <option value="icu">51. ICU</option>
+                        <option value="multi_comet">52. Multi Comet</option>
+                        <option value="dual_larson_scanner">53. Dual Larson Scanner</option>
+                        <option value="random_chase">54. Random Chase</option>
+                        <option value="oscillate">55. Oscillate</option>
+                        <option value="pride_2015">56. Pride 2015</option>
+                    </select>
+                </div>
 
-            <!-- Effect Speed Slider -->
-            <div class="field-group">
-                <label class="field-label" for="speedSlider">
-                    Animation Speed / Frame Interval
-                    <span class="field-val-badge" id="speedValBadge">50 ms</span>
-                </label>
-                <input type="range" id="speedSlider" class="slider-custom" min="15" max="300" step="5" value="50">
+                <div class="field-group">
+                    <label class="field-label" for="speedSlider">
+                        FX Speed
+                        <span class="field-val-badge" id="speedValBadge">50 ms</span>
+                    </label>
+                    <input type="range" id="speedSlider" class="slider-custom" min="15" max="300" step="5" value="50">
+                </div>
             </div>
         </section>
 
@@ -637,6 +670,6 @@
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=2.9"></script>
+    <script src="/static/js/app.js?v=3.1"></script>
 </body>
 </html>
