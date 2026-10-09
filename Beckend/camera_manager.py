@@ -153,6 +153,15 @@ class CameraManager:
             self.active_camera_id = cameras[0]["id"]
             cameras[0]["active"] = True
 
+        # Apply default 50 Hz anti-flicker on hardware
+        if self.active_camera_id and not self.active_camera_id.startswith("virtual"):
+            try:
+                dev_path = f"/dev/{self.active_camera_id}"
+                subprocess.run(["v4l2-ctl", "-d", dev_path, "--set-ctrl=power_line_frequency=1"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5)
+            except Exception:
+                pass
+
         return cameras
 
     def get_camera_controls(self, cam_id: str = None) -> dict:
@@ -170,7 +179,7 @@ class CameraManager:
                 "white_balance_temperature": {"value": 4000, "min": 2000, "max": 6500, "default": 4000},
                 "backlight_compensation": {"value": 0, "min": 0, "max": 1, "default": 0},
                 "gain": {"value": 0, "min": 0, "max": 255, "default": 0},
-                "power_line_frequency": {"value": 2, "default": 2},
+                "power_line_frequency": {"value": 1, "default": 1},
                 "auto_exposure": {"value": 3, "default": 3},
                 "exposure_time_absolute": {"value": 250, "min": 3, "max": 2047, "default": 250},
                 "exposure_dynamic_framerate": {"value": 0, "default": 0},
@@ -291,7 +300,8 @@ class CameraManager:
             self.camera_enabled = bool(enabled)
             if not self.camera_enabled:
                 self.last_frame = self._generate_synthetic_frame("Camera Disabled / Sleep")
-        self._restart_stream_pipeline()
+        if not self.camera_enabled:
+            self._restart_stream_pipeline()
         logger.info("Camera enabled state set to: %s", self.camera_enabled)
 
     def _restart_stream_pipeline(self):
@@ -315,9 +325,8 @@ class CameraManager:
                     proc.stdout.close()
             except Exception:
                 pass
-
-        # Give Linux kernel uvcvideo driver 300ms to cleanly release device buffers
-        time.sleep(0.3)
+            # Give Linux kernel uvcvideo driver 200ms to cleanly release device buffers
+            time.sleep(0.2)
 
     def _start_capture_loop(self):
         self.capture_thread = threading.Thread(target=self._continuous_stream_worker, name="CamContinuousWorker", daemon=True)
@@ -369,10 +378,11 @@ class CameraManager:
         while self.running:
             if not self.camera_enabled or not self.active_camera_id or self.active_camera_id.startswith("virtual"):
                 # Camera disabled or virtual: ensure hardware device is closed so camera LED turns off
-                self._restart_stream_pipeline()
+                if self.capture_proc is not None:
+                    self._restart_stream_pipeline()
                 with self.lock:
                     self.last_frame = self._generate_synthetic_frame("Camera Disabled / Sleep" if not self.camera_enabled else "Virtual Device")
-                time.sleep(0.5)
+                time.sleep(0.4)
                 continue
 
             dev_path = f"/dev/{self.active_camera_id}"

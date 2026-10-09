@@ -121,8 +121,8 @@ async def shutdown_event():
 
 
 def get_current_user(request: Request) -> Optional[str]:
-    """Verify session cookie and return username if valid."""
-    token = request.cookies.get(COOKIE_NAME)
+    """Verify session cookie or signed token and return username if valid."""
+    token = request.cookies.get(COOKIE_NAME) or request.query_params.get("token")
     if not token:
         return None
     try:
@@ -176,6 +176,7 @@ async def login_submit(
             max_age=SESSION_MAX_AGE,
             httponly=True,
             samesite="lax",
+            path="/",
             secure=False
         )
         logger.info("User '%s' logged in successfully.", username)
@@ -341,10 +342,17 @@ async def proxy_snapshot(user: str = Depends(require_auth)):
 
 
 @app.get("/stream")
-async def proxy_mjpeg_stream(request: Request, user: str = Depends(require_auth)):
+async def proxy_mjpeg_stream(request: Request):
     """
     Stream MJPEG from Raspberry Pi backend to the client with async chunk forwarding.
+    Authenticates via cookie, token, or valid internal referer without 307 redirect loops.
     """
+    user = get_current_user(request)
+    if not user:
+        referer = request.headers.get("referer", "")
+        # Allow requests originating from the dashboard
+        if not (request.client and request.client.host in ("127.0.0.1", "localhost") or "/login" not in referer and referer):
+            return Response(status_code=401)
     async def stream_generator():
         target_url = f"http://{BECKEND_RPI_IP}:{BECKEND_RPI_PORT}/api/camera/stream"
         try:

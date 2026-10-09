@@ -236,9 +236,9 @@ class ReinventedColorWheel {
         this.cx = this.width / 2;
         this.cy = this.height / 2;
 
-        this.outerRadius = 96;
-        this.innerRadius = 76;
-        this.boxHalfSize = 44;
+        this.outerRadius = Math.round(this.width * 0.44);
+        this.innerRadius = Math.round(this.width * 0.33);
+        this.boxHalfSize = Math.round(this.width * 0.20);
 
         this.isDraggingHue = false;
         this.isDraggingSV = false;
@@ -705,6 +705,22 @@ function setupLightListeners() {
 
 let fpsFrames = 0;
 let lastFpsTime = performance.now();
+let lastStreamFrameTime = performance.now();
+let streamReconnectTimer = null;
+
+function reconnectCameraStream(immediate = false) {
+    const streamImg = document.getElementById("cameraStream");
+    if (!streamImg || !state.camera.enabled) return;
+
+    if (streamReconnectTimer) clearTimeout(streamReconnectTimer);
+    streamReconnectTimer = setTimeout(() => {
+        if (state.camera.enabled) {
+            console.log("[Stream] Refreshing / reconnecting live camera MJPEG feed...");
+            lastStreamFrameTime = performance.now();
+            streamImg.src = `/stream?t=${Date.now()}`;
+        }
+    }, immediate ? 50 : 500);
+}
 
 function initFpsCounter() {
     const fpsBadge = document.getElementById("liveFpsBadge");
@@ -712,6 +728,7 @@ function initFpsCounter() {
     if (!streamImg) return;
 
     streamImg.addEventListener("load", () => {
+        lastStreamFrameTime = performance.now();
         fpsFrames++;
         const now = performance.now();
         const delta = now - lastFpsTime;
@@ -720,6 +737,30 @@ function initFpsCounter() {
             if (fpsBadge) fpsBadge.textContent = `${calculatedFps} FPS`;
             fpsFrames = 0;
             lastFpsTime = now;
+        }
+    });
+
+    // Auto-reconnect on image network error or dropped connection
+    streamImg.addEventListener("error", () => {
+        if (state.camera.enabled) {
+            console.warn("[Stream] Image error event triggered, scheduling auto-reconnect...");
+            reconnectCameraStream(false);
+        }
+    });
+
+    // Watchdog: If no frames received for 4 seconds while enabled, automatically revive stream
+    setInterval(() => {
+        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 4000)) {
+            console.warn("[Stream] Stream frame feed paused/stalled, auto-recovering...");
+            lastStreamFrameTime = performance.now();
+            reconnectCameraStream(true);
+        }
+    }, 2500);
+
+    // Tap stream to manually force-refresh if ever needed
+    streamImg.addEventListener("click", () => {
+        if (state.camera.enabled) {
+            reconnectCameraStream(true);
         }
     });
 }
@@ -823,6 +864,7 @@ function setupCameraListeners() {
         if (!overlay) return;
         const willOpen = typeof open === "boolean" ? open : !overlay.classList.contains("open");
         overlay.classList.toggle("open", willOpen);
+        reconnectCameraStream(false);
     }
 
     btnOpenOverlay?.addEventListener("click", () => toggleOverlay(true));
@@ -834,6 +876,10 @@ function setupCameraListeners() {
             toggleOverlay(false);
         }
     });
+
+    if (new URLSearchParams(window.location.search).has("open_cam")) {
+        setTimeout(() => toggleOverlay(true), 200);
+    }
 
     // Camera Select
     const select = document.getElementById("cameraSelect");
@@ -848,19 +894,59 @@ function setupCameraListeners() {
         showToast("Scanning for USB and CSI cameras...");
     });
 
-    // Camera Enable / Disable Toggle
+    // Camera Enable / Disable Toggle with state synchronization and rapid click protection
+    let isTogglingCamera = false;
     const btnToggle = document.getElementById("btnToggleCamera");
+
+    function updateCameraEnabledUI(enabled) {
+        state.camera.enabled = !!enabled;
+        if (btnToggle) {
+            btnToggle.classList.toggle("danger", !state.camera.enabled);
+            const span = btnToggle.querySelector("span");
+            if (span) span.textContent = state.camera.enabled ? "Disable Cam" : "Enable Cam";
+        }
+
+        const btnSnapshot = document.getElementById("btnSnapshot");
+        if (btnSnapshot) {
+            btnSnapshot.disabled = !state.camera.enabled;
+            btnSnapshot.classList.toggle("disabled", !state.camera.enabled);
+            btnSnapshot.title = state.camera.enabled 
+                ? "Capture high-resolution snapshot" 
+                : "Camera is disabled (enable camera to capture snapshot)";
+        }
+    }
+
+    // Expose for pollSystemStatus
+    window.updateCameraEnabledUI = updateCameraEnabledUI;
+    updateCameraEnabledUI(state.camera.enabled);
+
     btnToggle?.addEventListener("click", async () => {
-        state.camera.enabled = !state.camera.enabled;
-        btnToggle.classList.toggle("danger", !state.camera.enabled);
-        btnToggle.querySelector("span").textContent = state.camera.enabled ? "Disable Cam" : "Enable Cam";
-        
-        await fetch("/api/camera/toggle", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled: state.camera.enabled })
-        });
-        showToast(state.camera.enabled ? "Camera enabled" : "Camera paused/disabled");
+        if (isTogglingCamera) return;
+        isTogglingCamera = true;
+        btnToggle.style.opacity = "0.5";
+
+        const targetEnabled = !state.camera.enabled;
+        try {
+            const res = await fetch("/api/camera/toggle", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled: targetEnabled })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const actual = (data.camera_enabled !== undefined) ? data.camera_enabled : targetEnabled;
+                updateCameraEnabledUI(actual);
+                showToast(actual ? "Camera enabled" : "Camera paused / sleep");
+            } else {
+                showToast("Failed to toggle camera state");
+            }
+        } catch (e) {
+            console.error("Camera toggle failed:", e);
+            showToast("Camera toggle network error");
+        } finally {
+            isTogglingCamera = false;
+            btnToggle.style.opacity = "1";
+        }
 
         const streamImg = document.getElementById("cameraStream");
         if (streamImg) {
@@ -939,8 +1025,13 @@ function setupCameraListeners() {
         }
     });
 
-    // Snapshot Download
-    document.getElementById("btnSnapshot").addEventListener("click", async () => {
+    // Snapshot Download (Guarded against disabled camera)
+    const btnSnapshot = document.getElementById("btnSnapshot");
+    btnSnapshot?.addEventListener("click", async () => {
+        if (!state.camera.enabled) {
+            showToast("Camera is disabled — enable camera to capture snapshot");
+            return;
+        }
         try {
             showToast("Capturing high-resolution snapshot...");
             const res = await fetch("/api/camera/snapshot");
@@ -1169,6 +1260,8 @@ async function pollSystemStatus() {
         const statusDot = document.getElementById("statusDot");
         const statusText = document.getElementById("statusText");
         const latencyText = document.getElementById("latencyText");
+        const statusDotMobile = document.getElementById("statusDotMobile");
+        const statusTextMobile = document.getElementById("statusTextMobile");
 
         if (data.status === "ok" && data.system) {
             state.system.online = true;
@@ -1176,20 +1269,42 @@ async function pollSystemStatus() {
             statusText.textContent = "CONNECTED";
             latencyText.textContent = `${latency}ms`;
 
+            if (statusDotMobile) statusDotMobile.className = "pill-dot online";
+            if (statusTextMobile) statusTextMobile.textContent = "LIVE";
+
             if (data.system.cpu_temp_c !== null) {
-                document.getElementById("statTemp").textContent = `${data.system.cpu_temp_c}°C`;
+                const tempStr = `${data.system.cpu_temp_c}°C`;
+                const el = document.getElementById("statTemp");
+                const elDr = document.getElementById("statTempDrawer");
+                if (el) el.textContent = tempStr;
+                if (elDr) elDr.textContent = tempStr;
             }
             if (data.system.ram_free_mb !== null) {
-                document.getElementById("statRam").textContent = `${data.system.ram_free_mb} MB`;
+                const ramStr = `${data.system.ram_free_mb} MB`;
+                const el = document.getElementById("statRam");
+                const elDr = document.getElementById("statRamDrawer");
+                if (el) el.textContent = ramStr;
+                if (elDr) elDr.textContent = ramStr;
             }
             if (data.system.load_avg) {
-                document.getElementById("statCpu").textContent = `${data.system.load_avg[0].toFixed(2)}`;
+                const cpuStr = `${data.system.load_avg[0].toFixed(2)}`;
+                const el = document.getElementById("statCpu");
+                const elDr = document.getElementById("statCpuDrawer");
+                if (el) el.textContent = cpuStr;
+                if (elDr) elDr.textContent = cpuStr;
             }
 
             // Sync camera controls from hardware
             if (!initialControlsSynced && data.camera && data.camera.controls) {
                 syncControlsUIFromData(data.camera.controls);
                 initialControlsSynced = true;
+            }
+
+            // Sync camera enabled hardware state
+            if (data.camera && data.camera.camera_enabled !== undefined) {
+                if (window.updateCameraEnabledUI && state.camera.enabled !== data.camera.camera_enabled) {
+                    window.updateCameraEnabledUI(data.camera.camera_enabled);
+                }
             }
 
             // Sync lights initial hardware power
@@ -1214,11 +1329,20 @@ async function pollSystemStatus() {
             statusDot.className = "pill-dot offline";
             statusText.textContent = "OFFLINE";
             latencyText.textContent = "--";
+            if (statusDotMobile) statusDotMobile.className = "pill-dot offline";
+            if (statusTextMobile) statusTextMobile.textContent = "OFFLINE";
         }
     } catch (e) {
-        document.getElementById("statusDot").className = "pill-dot offline";
-        document.getElementById("statusText").textContent = "DISCONNECTED";
-        document.getElementById("latencyText").textContent = "--";
+        const dot = document.getElementById("statusDot");
+        const txt = document.getElementById("statusText");
+        const lat = document.getElementById("latencyText");
+        if (dot) dot.className = "pill-dot offline";
+        if (txt) txt.textContent = "DISCONNECTED";
+        if (lat) lat.textContent = "--";
+        const dotM = document.getElementById("statusDotMobile");
+        const txtM = document.getElementById("statusTextMobile");
+        if (dotM) dotM.className = "pill-dot offline";
+        if (txtM) txtM.textContent = "DISCONNECTED";
     }
 }
 
@@ -1237,6 +1361,18 @@ function setupInactivityHeartbeat() {
     });
 
     const timerEl = document.getElementById("statIdleTimer");
+    const timerDrawerEl = document.getElementById("statIdleTimerDrawer");
+
+    const updateTimerText = (formattedTime, isWarning) => {
+        if (timerEl) {
+            timerEl.textContent = formattedTime;
+            timerEl.style.color = isWarning ? "var(--neon-red)" : "";
+        }
+        if (timerDrawerEl) {
+            timerDrawerEl.textContent = formattedTime;
+            timerDrawerEl.style.color = isWarning ? "var(--neon-red)" : "";
+        }
+    };
 
     // Periodic heartbeat every 20 seconds while user is active
     setInterval(async () => {
@@ -1246,10 +1382,11 @@ function setupInactivityHeartbeat() {
                 if (res.ok) {
                     const data = await res.json();
                     userActiveSinceLastHeartbeat = false;
-                    if (timerEl && data.remaining_seconds !== undefined) {
+                    if (data.remaining_seconds !== undefined) {
                         const m = Math.floor(data.remaining_seconds / 60);
                         const s = data.remaining_seconds % 60;
-                        timerEl.textContent = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+                        const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+                        updateTimerText(formatted, data.remaining_seconds <= 60);
                     }
                 }
             } catch (e) {
@@ -1262,16 +1399,11 @@ function setupInactivityHeartbeat() {
     setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - lastUserInteraction) / 1000);
         const remaining = Math.max(0, 600 - elapsedSec);
-        if (timerEl) {
-            const m = Math.floor(remaining / 60);
-            const s = remaining % 60;
-            timerEl.textContent = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-            if (remaining <= 60) {
-                timerEl.style.color = "var(--neon-red)";
-            } else {
-                timerEl.style.color = "";
-            }
-        }
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        const formatted = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+        updateTimerText(formatted, remaining <= 60);
+
         if (remaining === 0 && (state.lights.power || state.camera.enabled)) {
             setMasterPower(false);
             if (state.camera.enabled) {
@@ -1293,6 +1425,65 @@ function setupInactivityHeartbeat() {
 }
 
 
+// --- MOBILE LED OFF-CANVAS HAMBURGER DRAWER ---
+function setupMobileLedDrawer() {
+    const btnHamburger = document.getElementById("btnHamburgerLed");
+    const lightsPanel = document.getElementById("lightsPanel");
+    const backdrop = document.getElementById("mobileLedBackdrop");
+    const btnClose = document.getElementById("btnCloseLedPanel");
+
+    function toggleMobileDrawer(open) {
+        if (!lightsPanel) return;
+        const willOpen = typeof open === "boolean" ? open : !lightsPanel.classList.contains("mobile-open");
+        lightsPanel.classList.toggle("mobile-open", willOpen);
+        if (backdrop) {
+            backdrop.classList.toggle("active", willOpen);
+        }
+        reconnectCameraStream(false);
+    }
+
+    if (btnHamburger) {
+        btnHamburger.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMobileDrawer(true);
+        });
+    }
+
+    if (btnClose) {
+        btnClose.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMobileDrawer(false);
+        });
+    }
+
+    if (backdrop) {
+        backdrop.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMobileDrawer(false);
+        });
+    }
+
+    if (lightsPanel) {
+        lightsPanel.addEventListener("click", (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && lightsPanel?.classList.contains("mobile-open")) {
+            toggleMobileDrawer(false);
+        }
+    });
+
+    if (new URLSearchParams(window.location.search).has("open_led")) {
+        setTimeout(() => toggleMobileDrawer(true), 200);
+    }
+}
+
+
 // --- INITIALIZATION ---
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1308,6 +1499,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Bind UI listeners
     setupLightListeners();
     setupCameraListeners();
+    setupMobileLedDrawer();
     initFpsCounter();
     applyViewportTransforms();
 

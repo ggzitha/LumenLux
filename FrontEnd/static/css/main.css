@@ -76,11 +76,15 @@ body {
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border-subtle);
-    padding: 0.85rem 1.75rem;
+    padding: 0 1.25rem;
+    height: 52px;
+    max-height: 52px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1.5rem;
+    gap: 1rem;
+    flex-wrap: nowrap;
+    overflow: hidden;
 }
 
 .brand-wrapper {
@@ -187,30 +191,268 @@ body {
 /* Main Layout Grid: 70% Camera / 30% Light Control on Desktop & Landscape */
 .dashboard-container {
     position: relative;
-    z-index: 1;
     max-width: 1800px;
     margin: 1.25rem auto 0;
     padding: 0 1.25rem;
     display: grid;
     grid-template-columns: 7fr 3fr;
     gap: 1.25rem;
-    align-items: start;
+    align-items: stretch; /* Both sections have the exact same height on desktop */
 }
 
-/* Portrait (Mobile & Tablet): Camera on top, Light on bottom */
-@media (orientation: portrait), (max-width: 860px) and (orientation: portrait) {
+/* Desktop Panel Equal Height Sizing */
+@media (min-width: 861px) and (orientation: landscape) {
+    .dashboard-container {
+        align-items: stretch;
+    }
+    .camera-panel {
+        display: flex;
+        flex-direction: column;
+    }
+    .lights-panel {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        max-height: 100%;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(0, 242, 254, 0.25) transparent;
+    }
+    .lights-panel::-webkit-scrollbar {
+        width: 5px;
+    }
+    .lights-panel::-webkit-scrollbar-thumb {
+        background: rgba(0, 242, 254, 0.3);
+        border-radius: 4px;
+    }
+}
+
+/* Default Desktop State for Mobile Triggers (Hidden on Desktop) */
+.mobile-header-actions {
+    display: none;
+}
+.mobile-drawer-stats {
+    display: none;
+}
+.btn-hamburger-led {
+    display: none;
+}
+.btn-panel-close-mobile {
+    display: none;
+}
+.mobile-drawer-backdrop {
+    display: none;
+}
+
+/* ==========================================================================
+   Mobile & Tablet Adaptive Layout:
+   - Clean Single-Line 50px Header (Raspberry Pi status hidden from navbar)
+   - Status badges cleanly placed inside LED drawer
+   - Interactive Hamburger Button to slide LED drawer
+   ========================================================================== */
+@media (max-width: 1024px), (orientation: portrait), (max-height: 540px) {
+    /* Clean Single-Line Mobile App Header */
+    .app-header {
+        position: sticky !important;
+        top: 0 !important;
+        padding: 0 12px !important;
+        height: 50px !important;
+        min-height: 50px !important;
+        max-height: 50px !important;
+        flex-wrap: nowrap !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        gap: 8px !important;
+        z-index: 100 !important;
+        overflow: hidden !important;
+    }
+
+    /* Completely hide desktop status metrics from header so they never take space */
+    .desktop-stats {
+        display: none !important;
+    }
+    .brand-subtext {
+        display: none !important;
+    }
+    .brand-icon {
+        width: 32px !important;
+        height: 32px !important;
+        flex-shrink: 0 !important;
+    }
+    .brand-text h1 {
+        font-size: 1.05rem !important;
+        white-space: nowrap !important;
+    }
+
+    /* Single-line mobile header action buttons (LIVE indicator + Hamburger) */
+    .mobile-header-actions {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        flex-shrink: 0 !important;
+    }
+    .mobile-status-pill {
+        display: inline-flex !important;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-full);
+    }
+
     .dashboard-container {
         grid-template-columns: 1fr;
         gap: 1rem;
         padding: 0 0.75rem;
         margin-top: 0.75rem;
+        align-items: start;
     }
-}
 
-/* Landscape (Desktop & Mobile Landscape): Force 70% Camera / 30% Light */
-@media (orientation: landscape) {
-    .dashboard-container {
-        grid-template-columns: 7fr 3fr;
+    /* Off-Canvas Hamburger Drawer for LED Settings */
+    .lights-panel {
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 88vw !important;
+        max-width: 380px !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        z-index: 1200 !important; /* Above backdrop (1000) and header (100) */
+        background: #0b0f19 !important; /* Solid high-contrast dark background - ZERO blur */
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border-left: 1px solid rgba(16, 185, 129, 0.4) !important;
+        border-radius: 0 !important;
+        box-shadow: -15px 0 50px rgba(0, 0, 0, 0.95) !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        transform: translateX(105%) !important;
+        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        margin: 0 !important;
+        padding: 1rem !important;
+    }
+
+    .lights-panel.mobile-open {
+        transform: translateX(0) !important;
+    }
+
+    /* Mobile Drawer Internal System Stats Strip */
+    .mobile-drawer-stats {
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) auto;
+        gap: 6px;
+        background: rgba(17, 24, 39, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius-sm);
+        padding: 8px 10px;
+        margin-bottom: 0.75rem;
+    }
+    .drawer-stat-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.74rem;
+        color: var(--text-secondary);
+    }
+    .drawer-stat-item strong {
+        color: var(--text-primary);
+        font-family: monospace;
+    }
+    .drawer-logout-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px 8px;
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        border-radius: 4px;
+        color: #fca5a5;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    /* Mobile Hamburger Trigger in Header */
+    .btn-hamburger-led {
+        display: inline-flex !important;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 12px;
+        background: rgba(16, 185, 129, 0.2);
+        border: 1px solid var(--neon-green);
+        border-radius: var(--radius-sm);
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 0.82rem;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        position: relative;
+        z-index: 105;
+        transition: var(--transition);
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+    }
+    .btn-hamburger-led:active {
+        background: rgba(16, 185, 129, 0.4);
+        transform: scale(0.96);
+    }
+
+    .hamburger-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        width: 14px;
+    }
+    .hamburger-bars span {
+        display: block;
+        height: 2px;
+        background: var(--neon-green);
+        border-radius: 1px;
+    }
+
+    .btn-panel-close-mobile {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #ffffff;
+        font-size: 0.9rem;
+        cursor: pointer;
+        touch-action: manipulation;
+        transition: var(--transition);
+    }
+    .btn-panel-close-mobile:hover,
+    .btn-panel-close-mobile:active {
+        background: rgba(239, 68, 68, 0.25);
+        border-color: var(--neon-red);
+        color: var(--neon-red);
+    }
+
+    /* Backdrop Overlay when Mobile Drawer is Open (Clean dark veil, ZERO blur) */
+    .mobile-drawer-backdrop {
+        display: block !important;
+        position: fixed !important;
+        inset: 0 !important;
+        background: rgba(0, 0, 0, 0.35) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        z-index: 1000 !important; /* Below lights-panel (1200) */
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transition: opacity 0.25s ease !important;
+    }
+    .mobile-drawer-backdrop.active {
+        opacity: 1 !important;
+        pointer-events: auto !important;
     }
 }
 
@@ -365,6 +607,13 @@ body {
 .btn-icon:hover {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
+}
+.btn-icon:disabled,
+.btn-icon.disabled {
+    opacity: 0.35 !important;
+    cursor: not-allowed !important;
+    box-shadow: none !important;
+    transform: none !important;
 }
 .btn-icon.active {
     background: rgba(0, 242, 254, 0.15);
@@ -923,9 +1172,9 @@ input:checked + .switch-slider:before {
     min-width: 270px;
     max-width: 440px;
     z-index: 50;
-    background: rgba(8, 13, 24, 0.9);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: rgba(8, 13, 24, 0.42);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -933,8 +1182,8 @@ input:checked + .switch-slider:before {
     opacity: 0;
     pointer-events: none;
     transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
-    border-left: 1px solid rgba(0, 242, 254, 0.25);
-    box-shadow: -10px 0 35px rgba(0, 0, 0, 0.7);
+    border-left: 1px solid rgba(0, 242, 254, 0.3);
+    box-shadow: -10px 0 35px rgba(0, 0, 0, 0.5);
 }
 
 .camera-settings-overlay.open {
@@ -943,26 +1192,26 @@ input:checked + .switch-slider:before {
     pointer-events: auto;
 }
 
-/* Portrait Orientation (Smartphones & Tablets): Bottom Sheet taking ~42% of camera frame */
-@media (orientation: portrait) {
+/* Mobile & Portrait Screens: Right-Side Drawer (Same as Desktop, NOT on bottom) */
+@media (max-width: 768px), (orientation: portrait) {
     .camera-settings-overlay {
-        top: auto;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        width: 100%;
-        height: 42%;
-        min-width: 0;
-        max-width: none;
-        border-left: none;
-        border-top: 1px solid rgba(0, 242, 254, 0.35);
-        transform: translateY(100%);
-        box-shadow: 0 -12px 35px rgba(0, 0, 0, 0.8);
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: auto !important;
+        width: 62% !important;
+        min-width: 220px !important;
+        max-width: 320px !important;
+        height: 100% !important;
+        border-left: 1px solid rgba(0, 242, 254, 0.35) !important;
+        border-top: none !important;
+        transform: translateX(100%) !important;
+        box-shadow: -10px 0 30px rgba(0, 0, 0, 0.7) !important;
     }
     .camera-settings-overlay.open {
-        transform: translateY(0);
-        opacity: 1;
-        pointer-events: auto;
+        transform: translateX(0) !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
     }
 }
 
@@ -971,8 +1220,10 @@ input:checked + .switch-slider:before {
     align-items: center;
     justify-content: space-between;
     padding: 12px 18px;
-    background: rgba(15, 23, 42, 0.75);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(10, 15, 26, 0.6);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    border-bottom: 1px solid rgba(0, 242, 254, 0.2);
     flex-shrink: 0;
 }
 
@@ -1045,13 +1296,13 @@ input:checked + .switch-slider:before {
     background: rgba(13, 19, 33, 0.65);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 14px 16px;
-    margin-bottom: 1.25rem;
+    padding: 8px 12px;
+    margin-bottom: 0.65rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+    gap: 6px;
+    box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.3);
 }
 
 .color-wheel-header {
@@ -1062,7 +1313,7 @@ input:checked + .switch-slider:before {
 }
 
 .color-wheel-title {
-    font-size: 0.84rem;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--text-secondary);
     letter-spacing: 0.5px;
@@ -1074,7 +1325,7 @@ input:checked + .switch-slider:before {
     background: rgba(0, 0, 0, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 6px;
-    padding: 2px 8px;
+    padding: 2px 7px;
     box-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
     transition: all 0.2s ease;
     cursor: text;
@@ -1092,20 +1343,20 @@ input:checked + .switch-slider:before {
 .wheel-hex-hash {
     color: var(--neon-cyan);
     font-family: monospace;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     font-weight: 700;
     user-select: none;
     margin-right: 2px;
 }
 
 .wheel-hex-badge-input {
-    width: 66px;
+    width: 62px;
     background: transparent;
     border: none;
     outline: none;
     color: #ffffff;
     font-family: monospace;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -1114,8 +1365,10 @@ input:checked + .switch-slider:before {
 
 .color-wheel-canvas-container {
     position: relative;
-    width: 100%;
-    max-width: 220px;
+    width: 150px;
+    height: 150px;
+    max-width: 150px;
+    max-height: 150px;
     aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
@@ -1127,10 +1380,10 @@ input:checked + .switch-slider:before {
 }
 
 #reinventedColorWheel {
-    width: 100%;
-    height: 100%;
-    max-width: 220px;
-    max-height: 220px;
+    width: 150px;
+    height: 150px;
+    max-width: 150px;
+    max-height: 150px;
     border-radius: 50%;
     cursor: crosshair;
     display: block;
@@ -1172,6 +1425,26 @@ input:checked + .switch-slider:before {
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 8px;
     padding: 8px 10px;
+    background: rgba(10, 15, 26, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.camera-settings-overlay .props-table-header {
+    background: rgba(10, 15, 26, 0.45);
+    border-radius: 4px;
+    padding: 4px 6px;
+}
+.camera-settings-overlay .props-row {
+    background: rgba(10, 15, 26, 0.25);
+    border-radius: 6px;
+    padding: 3px 6px;
+}
+.camera-settings-overlay .props-tab-bar {
+    background: rgba(10, 15, 26, 0.35);
+}
+.camera-settings-overlay .props-footer {
+    background: rgba(10, 15, 26, 0.35);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
 }
 
 
