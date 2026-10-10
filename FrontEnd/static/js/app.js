@@ -15,7 +15,8 @@ const envDefaults = window.APP_DEFAULTS || {
     led_auto_off: 120,
     inactivity_time: 600,
     led_length: 100,
-    default_resolution: "1920x1080"
+    default_resolution: "1920x1080",
+    default_device_cam_fit: "cover"
 };
 
 // Global State
@@ -63,6 +64,7 @@ const state = {
         resolution: "1920x1080",
         digital_zoom: 1.0,
         rotation: 0,
+        fit_mode: envDefaults.default_device_cam_fit || "cover",
         flip_h: false,
         flip_v: false,
         grid_active: false,
@@ -134,6 +136,7 @@ function saveConfig() {
                 resolution: state.deviceCamera.resolution,
                 digital_zoom: state.deviceCamera.digital_zoom,
                 rotation: state.deviceCamera.rotation,
+                fit_mode: state.deviceCamera.fit_mode,
                 focus_mode: state.deviceCamera.focus_mode,
                 focus_distance: state.deviceCamera.focus_distance,
                 flip_h: state.deviceCamera.flip_h,
@@ -296,7 +299,7 @@ class ReinventedColorWheel {
     constructor(canvas, options = {}) {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
-        this.onChange = options.onChange || (() => {});
+        this.onChange = options.onChange || (() => { });
 
         // Color state: h in [0, 360), s in [0, 1], v in [0, 1]
         this.h = 0;
@@ -677,7 +680,7 @@ function setupLightListeners() {
     ["Red", "Green", "Blue"].forEach(channel => {
         const slider = document.getElementById(`slider${channel}`);
         const input = document.getElementById(`input${channel}`);
-        
+
         slider?.addEventListener("input", (e) => {
             const val = parseInt(e.target.value, 10);
             input.value = val;
@@ -882,7 +885,7 @@ function getResolutionFriendlyLabel(resStr) {
 function populateCameraResolutions(resolutions) {
     const resSelect = document.getElementById("resolutionSelect");
     if (!resSelect) return;
-    
+
     resSelect.innerHTML = "";
     const list = Array.isArray(resolutions) && resolutions.length > 0
         ? resolutions
@@ -942,7 +945,7 @@ function applyCameraList(cameras) {
         }
         const badge = document.getElementById("activeCamBadge");
         if (badge) badge.textContent = select.options[select.selectedIndex]?.text || "Camera Connected";
-        
+
         // Dynamically populate resolution dropdown strictly from connected camera hardware data!
         populateCameraResolutions(activeCam.resolutions);
     } else {
@@ -1310,6 +1313,9 @@ function syncControlsUIFromData(controls) {
         const llc = document.getElementById("ctrlLowLightComp");
         if (llc) llc.checked = !!controls.exposure_dynamic_framerate.value;
     }
+
+    // Refresh visibility of circular reset arrows after syncing from backend
+    window.updateResetButtonsState?.();
 }
 
 function setupDirectShowControls() {
@@ -1834,7 +1840,7 @@ function setupResetToDefaults() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ camera_id: state.camera.active_id })
-                }).catch(() => {});
+                }).catch(() => { });
             }
         } catch (e) {
             console.warn("Could not reset camera hardware defaults:", e);
@@ -1873,16 +1879,16 @@ function updateSnapshotButtonState() {
 
     if (state.camera.enabled && state.deviceCamera?.active) {
         btnSnapshot.title = "Capture combined dual-camera snapshot (Chamber + Device)";
-        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Dual Snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Catch It!";
     } else if (state.camera.enabled) {
         btnSnapshot.title = "Capture Chamber camera snapshot";
-        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Chamber Snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Catch It!";
     } else if (state.deviceCamera?.active) {
         btnSnapshot.title = "Capture Device camera snapshot";
-        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Device Snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Catch It!";
     } else {
         btnSnapshot.title = "Cameras are disabled (enable camera to capture snapshot)";
-        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Catch It!";
     }
 }
 
@@ -1897,6 +1903,7 @@ function applyDeviceViewportTransforms() {
 
     video.style.transformOrigin = "center center";
     video.style.transform = `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`;
+    video.style.objectFit = state.deviceCamera.fit_mode || "contain";
 
     const filters = state.deviceCamera.filters || {};
     const brightness = filters.brightness ?? 100;
@@ -2005,7 +2012,7 @@ async function startDeviceCameraStream() {
 
         if (video) {
             video.srcObject = stream;
-            await video.play().catch(() => {});
+            await video.play().catch(() => { });
         }
 
         if (slotDevice) slotDevice.classList.remove("hidden");
@@ -2140,6 +2147,18 @@ function setupDeviceCameraManager() {
         updateRotateUI(nextDeg);
         showToast(`Device camera rotated to ${nextDeg}°`);
     });
+
+    // Framing / Fit Mode Control (Fit vs Fill)
+    const fitSelect = document.getElementById("deviceFitSelect");
+    if (fitSelect) {
+        fitSelect.value = state.deviceCamera.fit_mode || envDefaults.default_device_cam_fit || "cover";
+        fitSelect.addEventListener("change", (e) => {
+            state.deviceCamera.fit_mode = e.target.value;
+            applyDeviceViewportTransforms();
+            saveConfig();
+            showToast(`Framing mode: ${e.target.value === "cover" ? "Fill (Crop to 16:9)" : "Fit (No Crop — Full View)"}`);
+        });
+    }
 
     // Flip Controls
     const btnFlipH = document.getElementById("btnDeviceFlipH");
@@ -2571,7 +2590,7 @@ function drawLumenLuxTwibbonStamp(ctx, totalWidth, totalHeight, border) {
     ctx.fillStyle = "#f59e0b";
     ctx.font = "700 8px 'Inter', sans-serif";
     ctx.letterSpacing = "1px";
-    ctx.fillText("OFFICIAL CAPTURE", badgeX + 44, badgeY + 30);
+    ctx.fillText("Calibration Capture", badgeX + 44, badgeY + 30);
 
     // 4. Certified Check Stamp Badge on the right
     ctx.fillStyle = "rgba(16, 185, 129, 0.2)";
@@ -2707,17 +2726,22 @@ async function captureMultiCameraSnapshot() {
             }
             ctx.filter = filterStr;
 
-            // Aspect cover calculation taking rotation into account
+            // Aspect fit/cover calculation matching live browser preview exactly
             const w2 = imgDevice.width;
             const h2 = imgDevice.height;
-            let coverScale2;
+            const fitMode = state.deviceCamera.fit_mode || "contain";
+            let scale2;
             if (rot === 90 || rot === 270) {
-                coverScale2 = Math.max(slotH / w2, slotW / h2);
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotH / w2, slotW / h2)
+                    : Math.min(slotH / w2, slotW / h2);
             } else {
-                coverScale2 = Math.max(slotW / w2, slotH / h2);
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotW / w2, slotH / h2)
+                    : Math.min(slotW / w2, slotH / h2);
             }
-            const drawW2 = w2 * coverScale2;
-            const drawH2 = h2 * coverScale2;
+            const drawW2 = w2 * scale2;
+            const drawH2 = h2 * scale2;
             ctx.drawImage(imgDevice, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
             ctx.restore();
 
@@ -2796,14 +2820,19 @@ async function captureMultiCameraSnapshot() {
 
             const w2 = imgDevice.width;
             const h2 = imgDevice.height;
-            let coverScale2;
+            const fitMode = state.deviceCamera.fit_mode || "contain";
+            let scale2;
             if (rot === 90 || rot === 270) {
-                coverScale2 = Math.max(slotH / w2, slotW / h2);
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotH / w2, slotW / h2)
+                    : Math.min(slotH / w2, slotW / h2);
             } else {
-                coverScale2 = Math.max(slotW / w2, slotH / h2);
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotW / w2, slotH / h2)
+                    : Math.min(slotW / w2, slotH / h2);
             }
-            const drawW2 = w2 * coverScale2;
-            const drawH2 = h2 * coverScale2;
+            const drawW2 = w2 * scale2;
+            const drawH2 = h2 * scale2;
             ctx.drawImage(imgDevice, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
             ctx.restore();
 
@@ -2815,6 +2844,264 @@ async function captureMultiCameraSnapshot() {
         console.error("Multi-camera snapshot failed:", err);
         showToast("Snapshot error: " + err.message);
     }
+}
+
+// ==========================================================================
+// ASSISTIVE TOUCH FLOATING MASTER ACTION BAR (MOBILE / SMARTPHONE VIEW)
+// ==========================================================================
+const FLOATING_POS_KEY = "lumen_floating_actions_pos_v2";
+
+function setupFloatingAssistiveTouch() {
+    const toolbar = document.getElementById("unifiedActionToolbar");
+    if (!toolbar) return;
+
+    function isMobileMode() {
+        return window.innerWidth <= 1024 || window.matchMedia("(pointer: coarse)").matches;
+    }
+
+    function getViewportBounds() {
+        const vv = window.visualViewport;
+        const vw = vv ? vv.width : window.innerWidth;
+        const vh = vv ? vv.height : window.innerHeight;
+        return { vw, vh };
+    }
+
+    function restorePosition() {
+        if (!isMobileMode()) {
+            toolbar.style.left = "";
+            toolbar.style.top = "";
+            toolbar.style.right = "";
+            toolbar.style.bottom = "";
+            return;
+        }
+
+        try {
+            const saved = localStorage.getItem(FLOATING_POS_KEY);
+            const rect = toolbar.getBoundingClientRect();
+            const w = rect.width || 180;
+            const h = rect.height || 96;
+            const { vw, vh } = getViewportBounds();
+            const minLeft = 8;
+            const minTop = 56; // Header height safety margin (never under 50px header)
+            const maxLeft = Math.max(minLeft, vw - w - 8);
+            const maxTop = Math.max(minTop, vh - h - 8);
+
+            if (saved) {
+                const { leftPct, topPct } = JSON.parse(saved);
+                let targetLeft = (leftPct / 100) * vw;
+                let targetTop = (topPct / 100) * vh;
+                targetLeft = Math.max(minLeft, Math.min(targetLeft, maxLeft));
+                targetTop = Math.max(minTop, Math.min(targetTop, maxTop));
+
+                toolbar.style.left = `${Math.round(targetLeft)}px`;
+                toolbar.style.top = `${Math.round(targetTop)}px`;
+                toolbar.style.right = "auto";
+                toolbar.style.bottom = "auto";
+            } else {
+                // Default position: bottom-right
+                const defLeft = Math.max(minLeft, vw - w - 16);
+                const defTop = Math.max(minTop, vh - h - 24);
+                toolbar.style.left = `${Math.round(defLeft)}px`;
+                toolbar.style.top = `${Math.round(defTop)}px`;
+                toolbar.style.right = "auto";
+                toolbar.style.bottom = "auto";
+            }
+        } catch (e) {
+            console.warn("[AssistiveTouch] Position restore error:", e);
+        }
+    }
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+    let hasMoved = false;
+    const DRAG_THRESHOLD = 5;
+
+    function handleStart(e) {
+        if (!isMobileMode()) return;
+        const pointer = e.touches ? e.touches[0] : e;
+        isDragging = true;
+        hasMoved = false;
+        startX = pointer.clientX;
+        startY = pointer.clientY;
+
+        const rect = toolbar.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        toolbar.classList.add("is-dragging");
+
+        // Prevent native gesture scrolling when touching drag handle
+        if (e.cancelable && e.type === "touchstart") {
+            const isButton = e.target.closest("button");
+            if (!isButton || e.target.closest(".floating-drag-handle")) {
+                e.preventDefault();
+            }
+        }
+    }
+
+    function handleMove(e) {
+        if (!isDragging) return;
+        const pointer = e.touches ? e.touches[0] : e;
+        const deltaX = pointer.clientX - startX;
+        const deltaY = pointer.clientY - startY;
+
+        if (Math.hypot(deltaX, deltaY) > DRAG_THRESHOLD) {
+            hasMoved = true;
+        }
+
+        if (hasMoved) {
+            if (e.cancelable) e.preventDefault(); // Never scroll or rubberband the document while dragging!
+            const rect = toolbar.getBoundingClientRect();
+            const { vw, vh } = getViewportBounds();
+            const minLeft = 8;
+            const minTop = 56;
+            const maxLeft = Math.max(minLeft, vw - rect.width - 8);
+            const maxTop = Math.max(minTop, vh - rect.height - 8);
+
+            const newLeft = Math.max(minLeft, Math.min(initialLeft + deltaX, maxLeft));
+            const newTop = Math.max(minTop, Math.min(initialTop + deltaY, maxTop));
+
+            toolbar.style.left = `${Math.round(newLeft)}px`;
+            toolbar.style.top = `${Math.round(newTop)}px`;
+            toolbar.style.right = "auto";
+            toolbar.style.bottom = "auto";
+        }
+    }
+
+    function handleEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        toolbar.classList.remove("is-dragging");
+
+        if (hasMoved) {
+            // Save relative percentage position to localStorage
+            const rect = toolbar.getBoundingClientRect();
+            const { vw, vh } = getViewportBounds();
+            const leftPct = (rect.left / vw) * 100;
+            const topPct = (rect.top / vh) * 100;
+            try {
+                localStorage.setItem(FLOATING_POS_KEY, JSON.stringify({ leftPct, topPct }));
+            } catch (err) { }
+
+            // Suppress the click event triggered right after dragging
+            const suppressClick = (clickEvent) => {
+                clickEvent.stopPropagation();
+                clickEvent.preventDefault();
+                window.removeEventListener("click", suppressClick, true);
+            };
+            window.addEventListener("click", suppressClick, true);
+            setTimeout(() => {
+                window.removeEventListener("click", suppressClick, true);
+            }, 120);
+        }
+    }
+
+    // Touch Event Listeners (Mobile / Smartphone)
+    toolbar.addEventListener("touchstart", handleStart, { passive: false });
+    window.addEventListener("touchmove", handleMove, { passive: false });
+    window.addEventListener("touchend", handleEnd);
+    window.addEventListener("touchcancel", handleEnd);
+
+    // Mouse Event Listeners (Desktop mobile responsive simulation)
+    toolbar.addEventListener("mousedown", handleStart);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleEnd);
+
+    // Reposition on screen resize or orientation change
+    window.addEventListener("resize", debounce(restorePosition, 100));
+
+    // Initial position restore
+    setTimeout(restorePosition, 80);
+}
+
+// ==========================================================================
+// CIRCULAR ARROW SETTINGS RESET TO DEFAULT (↺)
+// ==========================================================================
+
+function setupSettingsResetButtons() {
+    const resetButtons = document.querySelectorAll(".btn-setting-reset");
+    if (!resetButtons.length) return;
+
+    resetButtons.forEach(btn => {
+        const targetId = btn.getAttribute("data-target");
+        const targetNumId = btn.getAttribute("data-target-num");
+        const autoId = btn.getAttribute("data-auto");
+        const badgeId = btn.getAttribute("data-badge");
+        const badgeSuffix = btn.getAttribute("data-badge-suffix") || "";
+        const defaultVal = btn.getAttribute("data-default");
+        if (!targetId || defaultVal === null) return;
+
+        const targetEl = document.getElementById(targetId);
+        const targetNumEl = targetNumId ? document.getElementById(targetNumId) : null;
+        if (!targetEl) return;
+
+        function checkVisibility() {
+            const currentVal = targetEl.value;
+            const isDiff = String(currentVal) !== String(defaultVal);
+            btn.classList.toggle("visible", isDiff);
+        }
+
+        // Listen for user changes
+        targetEl.addEventListener("input", checkVisibility);
+        targetEl.addEventListener("change", checkVisibility);
+        if (targetNumEl) {
+            targetNumEl.addEventListener("input", checkVisibility);
+            targetNumEl.addEventListener("change", checkVisibility);
+        }
+
+        // Click handler to restore to default setting
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+
+            targetEl.value = defaultVal;
+            if (targetNumEl) {
+                targetNumEl.value = defaultVal;
+            }
+            if (badgeId) {
+                const badgeEl = document.getElementById(badgeId);
+                if (badgeEl) {
+                    badgeEl.textContent = `${defaultVal}${badgeSuffix}`;
+                }
+            }
+            if (autoId) {
+                const autoEl = document.getElementById(autoId);
+                if (autoEl) {
+                    autoEl.checked = true;
+                    targetEl.disabled = true;
+                    if (targetNumEl) targetNumEl.disabled = true;
+                }
+            }
+
+            // Dispatch input and change events so camera listeners and API calls trigger
+            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+            targetEl.dispatchEvent(new Event("change", { bubbles: true }));
+
+            btn.classList.remove("visible");
+
+            const label = btn.closest(".props-row")?.querySelector(".props-label")?.textContent?.trim()
+                || btn.closest(".field-group")?.querySelector(".field-label")?.textContent?.trim()
+                || "Setting";
+            showToast(`${label} restored to default (${defaultVal})`);
+        });
+
+        // Initial check
+        checkVisibility();
+    });
+
+    // Expose global updater so when backend controls or presets sync, reset arrows update
+    window.updateResetButtonsState = () => {
+        resetButtons.forEach(btn => {
+            const targetId = btn.getAttribute("data-target");
+            const defaultVal = btn.getAttribute("data-default");
+            const targetEl = document.getElementById(targetId);
+            if (targetEl && defaultVal !== null) {
+                btn.classList.toggle("visible", String(targetEl.value) !== String(defaultVal));
+            }
+        });
+    };
 }
 
 // --- INITIALIZATION ---
@@ -2836,6 +3123,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setupOcrAuth();
     setupResetToDefaults();
     setupMobileLedDrawer();
+    setupFloatingAssistiveTouch();
+    setupSettingsResetButtons();
     initFpsCounter();
     applyViewportTransforms();
     updateSnapshotButtonState();

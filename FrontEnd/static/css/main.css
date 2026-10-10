@@ -498,12 +498,36 @@ body {
         border-radius: var(--radius-full);
     }
 
+    html,
+    body {
+        height: 100% !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        overflow: hidden !important;
+        overscroll-behavior: none !important;
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        padding-bottom: 0 !important;
+    }
+
     .dashboard-container {
         grid-template-columns: 1fr;
         gap: 1rem;
         padding: 0 0.75rem;
-        margin-top: 0.75rem;
+        margin-top: 0.5rem;
         align-items: start;
+        height: calc(100dvh - 50px) !important;
+        max-height: calc(100dvh - 50px) !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        scrollbar-width: none !important;
+        -ms-overflow-style: none !important;
+        padding-bottom: 96px !important;
+    }
+
+    .dashboard-container::-webkit-scrollbar {
+        display: none !important;
     }
 
     /* Off-Canvas Hamburger Drawer for LED Settings */
@@ -1086,6 +1110,79 @@ body {
     box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
 }
 
+/* Floating Drag Handle for Assistive Touch (Hidden on Desktop) */
+.floating-drag-handle {
+    display: none;
+}
+
+/* Mobile & Handphone Assistive Touch Floating Action Capsule */
+@media (max-width: 1024px), (pointer: coarse) {
+    .unified-action-toolbar {
+        position: fixed !important;
+        z-index: 9999 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        padding: 5px 8px 8px 8px !important;
+        background: rgba(8, 14, 26, 0.88) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border: 1px solid rgba(0, 242, 254, 0.45) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.75), 0 0 18px rgba(0, 242, 254, 0.22) !important;
+        touch-action: none !important;
+        overscroll-behavior: none !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        width: auto !important;
+        min-width: 160px !important;
+        max-width: 210px !important;
+        cursor: grab !important;
+        margin: 0 !important;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+
+    .unified-action-toolbar.is-dragging {
+        cursor: grabbing !important;
+        transition: none !important;
+        transform: scale(1.03) !important;
+        border-color: var(--neon-cyan) !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 28px rgba(0, 242, 254, 0.45) !important;
+    }
+
+    .floating-drag-handle {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 12px !important;
+        cursor: grab !important;
+        padding-bottom: 2px !important;
+    }
+
+    .drag-grip-dots {
+        width: 32px;
+        height: 3.5px;
+        background: rgba(0, 242, 254, 0.65);
+        border-radius: 4px;
+        box-shadow: 0 0 6px rgba(0, 242, 254, 0.4);
+    }
+
+    .unified-action-toolbar .btn-action-master {
+        padding: 7px 12px !important;
+        font-size: 0.75rem !important;
+        border-radius: 12px !important;
+        width: 100% !important;
+        min-height: 38px !important;
+        box-sizing: border-box !important;
+    }
+
+    .unified-action-toolbar .btn-action-master svg {
+        width: 14px !important;
+        height: 14px !important;
+    }
+}
+
 .btn-icon {
     flex: 1 1 0;
     min-width: 0;
@@ -1643,8 +1740,8 @@ input:checked+.switch-slider:before {
 
 .props-table-header {
     display: grid;
-    grid-template-columns: 140px 1fr 65px 50px;
-    gap: 12px;
+    grid-template-columns: 130px 1fr 60px 45px 28px;
+    gap: 10px;
     padding-bottom: 8px;
     margin-bottom: 8px;
     border-bottom: 1px solid var(--border-subtle);
@@ -1662,18 +1759,65 @@ input:checked+.switch-slider:before {
 
 .props-row {
     display: grid;
-    grid-template-columns: 140px 1fr 65px 50px;
+    grid-template-columns: 130px 1fr 60px 45px 28px;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 @media (max-width: 600px) {
 
     .props-table-header,
     .props-row {
-        grid-template-columns: 105px 1fr 50px 40px;
-        gap: 6px;
+        grid-template-columns: 85px 1fr 42px 26px 24px;
+        gap: 5px;
     }
+}
+
+.props-reset-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Circular Reset Button with smooth hover spin */
+.btn-setting-reset {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    min-height: 22px;
+    border-radius: 50%;
+    background: rgba(0, 242, 254, 0.12);
+    border: 1px solid rgba(0, 242, 254, 0.4);
+    color: var(--neon-cyan);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.65);
+    transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.btn-setting-reset.visible {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: scale(1) !important;
+}
+
+.btn-setting-reset:hover {
+    background: rgba(0, 242, 254, 0.28) !important;
+    border-color: var(--neon-cyan) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.55) !important;
+    transform: scale(1.15) rotate(-45deg) !important;
+}
+
+.btn-setting-reset:active {
+    transform: scale(0.95) rotate(-90deg) !important;
 }
 
 .props-label {
@@ -2147,9 +2291,9 @@ input:checked+.switch-slider:before {
 
 .camera-settings-overlay .props-table-header,
 .camera-settings-overlay .props-row {
-    grid-template-columns: 62px 1fr 40px 24px;
-    gap: 5px;
-    align-items: center;
+    grid-template-columns: 58px 1fr 36px 20px 22px !important;
+    gap: 4px !important;
+    align-items: center !important;
 }
 
 .camera-settings-overlay .props-label {

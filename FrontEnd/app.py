@@ -82,6 +82,7 @@ DEFAULT_LED_COLOR = os.environ.get("DEFAULT_LED_COLOR", "WHITE").strip()
 LED_AUTO_OFF = int(os.environ.get("LED_AUTO_OFF", 120))  # Auto turn off WS2812B LEDs after 2m (120s)
 LED_LENGTH = int(os.environ.get("LED_LENGTH", 100))
 DEFAULT_RESOLUTION = os.environ.get("DEFAULT_RESOLUTION", "1920x1080").strip()
+DEFAULT_DEVICE_CAM_FIT = os.environ.get("DEFAULT_DEVICE_CAM_FIT", "cover").strip().lower()
 OCR_PASSWORD = os.environ.get("OCR_PASSWORD", "QwertY123!")
 
 # Full System Inactivity Timeout (Seconds) - Powers off camera and entire system after 10m (600s)
@@ -151,6 +152,7 @@ def get_app_defaults() -> dict:
         "inactivity_time": INACTIVITY_TIME,
         "led_length": LED_LENGTH,
         "default_resolution": res_wh,
+        "default_device_cam_fit": DEFAULT_DEVICE_CAM_FIT,
     }
 
 

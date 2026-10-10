@@ -3,7 +3,8 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>LumenLux-Zero — Pi Remote Cam & WS2812B Control Studio</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/favicon.ico">
@@ -12,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=4.0">
+    <link rel="stylesheet" href="/static/css/main.css?v=4.2">
 </head>
 
 <body>
@@ -136,337 +137,582 @@
                     <div class="viewport-card" id="viewportCard">
                         <img id="cameraStream" class="viewport-stream" src="/stream" alt="Live Camera Stream">
 
-                <!-- Viewport Top Badges & Mobile Settings Trigger -->
-                <div class="viewport-overlay-top">
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <div class="overlay-chip">
-                            <span id="activeCamBadge">Detecting camera...</span>
-                        </div>
-                        <div class="overlay-chip fps-counter">
-                            <span id="liveFpsBadge">-- FPS</span>
-                        </div>
-                    </div>
-
-                    <!-- In-Frame Mobile-Style Camera Settings Button -->
-                    <button class="overlay-btn-settings" id="btnToggleCamOverlay" type="button"
-                        title="Open Camera Hardware Settings">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                            <path
-                                d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
-                        </svg>
-                        <span>Camera Settings</span>
-                    </button>
-                </div>
-
-                <!-- Rule of Thirds Framing Grid -->
-                <div class="framing-grid" id="framingGrid">
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                </div>
-
-                <!-- In-Frame Mobile-Style Camera Settings Glass Overlay Drawer -->
-                <div class="camera-settings-overlay {% if request.query_params.get('open_cam') %}open{% endif %}"
-                    id="cameraSettingsOverlay">
-                    <div class="cam-overlay-header">
-                        <div class="cam-overlay-title">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                <path
-                                    d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.63c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z" />
-                            </svg>
-                            <span>Camera Pro Controls</span>
-                        </div>
-                        <button type="button" class="btn-overlay-close" id="btnCloseCamOverlay"
-                            title="Close Settings">✕</button>
-                    </div>
-
-                    <div class="cam-overlay-body">
-                        <!-- Hardware Property & Stream Configuration Tabs -->
-                        <div class="props-tab-bar">
-                            <button type="button" class="props-tab-btn active" id="tabBtnCamCtrl"
-                                data-tab="tabCamCtrl">Camera Control</button>
-                            <button type="button" class="props-tab-btn" id="tabBtnVpa" data-tab="tabVpa">Video Proc
-                                Amp</button>
-                            <button type="button" class="props-tab-btn" id="tabBtnStreamCfg"
-                                data-tab="tabStreamCfg">Stream Config</button>
-                        </div>
-
-                        <!-- Tab 1: Camera Control -->
-                        <div class="props-tab-content active" id="tabCamCtrl">
-                            <div class="props-table-header">
-                                <span>Property</span>
-                                <span>Setting</span>
-                                <span>Value</span>
-                                <span>Auto</span>
-                            </div>
-                            <div class="props-table">
-                                <!-- Zoom -->
-                                <div class="props-row">
-                                    <span class="props-label">Zoom</span>
-                                    <input type="range" class="slider-custom" id="ctrlZoomSlider" min="100" max="500"
-                                        value="100">
-                                    <input type="number" class="props-num-input" id="ctrlZoomNum" min="100" max="500"
-                                        value="100">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="ctrlZoomAuto" disabled></div>
+                        <!-- Viewport Top Badges & Mobile Settings Trigger -->
+                        <div class="viewport-overlay-top">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <div class="overlay-chip">
+                                    <span id="activeCamBadge">Detecting camera...</span>
                                 </div>
-
-                                <!-- Focus -->
-                                <div class="props-row">
-                                    <span class="props-label">Focus</span>
-                                    <input type="range" class="slider-custom" id="ctrlFocusSlider" min="0" max="250"
-                                        value="0" disabled>
-                                    <input type="number" class="props-num-input" id="ctrlFocusNum" min="0" max="250"
-                                        value="0" disabled>
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="ctrlFocusAuto" checked title="Auto Focus"></div>
-                                </div>
-
-                                <!-- Exposure -->
-                                <div class="props-row">
-                                    <span class="props-label">Exposure</span>
-                                    <input type="range" class="slider-custom" id="ctrlExpSlider" min="3" max="2047"
-                                        value="250" disabled>
-                                    <input type="number" class="props-num-input" id="ctrlExpNum" min="3" max="2047"
-                                        value="250" disabled>
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="ctrlExpAuto" checked title="Auto Exposure"></div>
-                                </div>
-
-                                <!-- Aperture (Iris) -->
-                                <div class="props-row">
-                                    <span class="props-label" style="opacity: 0.7;">Aperture</span>
-                                    <input type="range" class="slider-custom" id="ctrlIrisSlider" min="0" max="10"
-                                        value="0" disabled>
-                                    <input type="number" class="props-num-input" id="ctrlIrisNum" min="0" max="10"
-                                        value="0" disabled>
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="ctrlIrisAuto" disabled></div>
-                                </div>
-
-                                <!-- Pan -->
-                                <div class="props-row">
-                                    <span class="props-label">Pan</span>
-                                    <input type="range" class="slider-custom" id="ctrlPanSlider" min="-36000"
-                                        max="36000" step="3600" value="0">
-                                    <input type="number" class="props-num-input" id="ctrlPanNum" min="-36000"
-                                        max="36000" step="3600" value="0">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            disabled></div>
-                                </div>
-
-                                <!-- Tilt -->
-                                <div class="props-row">
-                                    <span class="props-label">Tilt</span>
-                                    <input type="range" class="slider-custom" id="ctrlTiltSlider" min="-36000"
-                                        max="36000" step="3600" value="0">
-                                    <input type="number" class="props-num-input" id="ctrlTiltNum" min="-36000"
-                                        max="36000" step="3600" value="0">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            disabled></div>
-                                </div>
-
-                                <!-- Roll -->
-                                <div class="props-row">
-                                    <span class="props-label" style="opacity: 0.7;">Roll</span>
-                                    <input type="range" class="slider-custom" id="ctrlRollSlider" min="0" max="0"
-                                        value="0" disabled>
-                                    <input type="number" class="props-num-input" id="ctrlRollNum" min="0" max="0"
-                                        value="0" disabled>
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            disabled></div>
+                                <div class="overlay-chip fps-counter">
+                                    <span id="liveFpsBadge">-- FPS</span>
                                 </div>
                             </div>
 
-                            <div class="props-footer">
-                                <label
-                                    style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer;">
-                                    <input type="checkbox" class="props-auto-checkbox" id="ctrlLowLightComp">
-                                    <span>Low Light Compensation (Logitech Dynamic FPS)</span>
-                                </label>
-                                <button type="button" class="btn-default-reset"
-                                    id="btnResetCamCtrlDefaults">Default</button>
-                            </div>
+                            <!-- In-Frame Mobile-Style Camera Settings Button -->
+                            <button class="overlay-btn-settings" id="btnToggleCamOverlay" type="button"
+                                title="Open Camera Hardware Settings">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path
+                                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                                </svg>
+                                <span>Camera Settings</span>
+                            </button>
                         </div>
 
-                        <!-- Tab 2: Video Proc Amp -->
-                        <div class="props-tab-content" id="tabVpa">
-                            <div class="props-table-header">
-                                <span>Property</span>
-                                <span>Setting</span>
-                                <span>Value</span>
-                                <span>Auto</span>
-                            </div>
-                            <div class="props-table">
-                                <!-- Brightness -->
-                                <div class="props-row">
-                                    <span class="props-label">Brightness</span>
-                                    <input type="range" class="slider-custom" id="vpaBrightnessSlider" min="0" max="255"
-                                        value="128">
-                                    <input type="number" class="props-num-input" id="vpaBrightnessNum" min="0" max="255"
-                                        value="128">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaBrightnessAuto" disabled></div>
-                                </div>
+                        <!-- Rule of Thirds Framing Grid -->
+                        <div class="framing-grid" id="framingGrid">
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                        </div>
 
-                                <!-- Contrast -->
-                                <div class="props-row">
-                                    <span class="props-label">Contrast</span>
-                                    <input type="range" class="slider-custom" id="vpaContrastSlider" min="0" max="255"
-                                        value="128">
-                                    <input type="number" class="props-num-input" id="vpaContrastNum" min="0" max="255"
-                                        value="128">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaContrastAuto" disabled></div>
+                        <!-- In-Frame Mobile-Style Camera Settings Glass Overlay Drawer -->
+                        <div class="camera-settings-overlay {% if request.query_params.get('open_cam') %}open{% endif %}"
+                            id="cameraSettingsOverlay">
+                            <div class="cam-overlay-header">
+                                <div class="cam-overlay-title">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                        <path
+                                            d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.63c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z" />
+                                    </svg>
+                                    <span>Camera Pro Controls</span>
                                 </div>
-
-                                <!-- Hue -->
-                                <div class="props-row">
-                                    <span class="props-label">Hue</span>
-                                    <input type="range" class="slider-custom" id="vpaHueSlider" min="-180" max="180"
-                                        value="0">
-                                    <input type="number" class="props-num-input" id="vpaHueNum" min="-180" max="180"
-                                        value="0">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaHueAuto" disabled></div>
-                                </div>
-
-                                <!-- Saturation -->
-                                <div class="props-row">
-                                    <span class="props-label">Saturation</span>
-                                    <input type="range" class="slider-custom" id="vpaSaturationSlider" min="0" max="255"
-                                        value="128">
-                                    <input type="number" class="props-num-input" id="vpaSaturationNum" min="0" max="255"
-                                        value="128">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaSaturationAuto" disabled></div>
-                                </div>
-
-                                <!-- Sharpness -->
-                                <div class="props-row">
-                                    <span class="props-label">Sharpness</span>
-                                    <input type="range" class="slider-custom" id="vpaSharpnessSlider" min="0" max="255"
-                                        value="128">
-                                    <input type="number" class="props-num-input" id="vpaSharpnessNum" min="0" max="255"
-                                        value="128">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaSharpnessAuto" disabled></div>
-                                </div>
-
-                                <!-- Gamma -->
-                                <div class="props-row">
-                                    <span class="props-label">Gamma</span>
-                                    <input type="range" class="slider-custom" id="vpaGammaSlider" min="100" max="500"
-                                        value="100">
-                                    <input type="number" class="props-num-input" id="vpaGammaNum" min="100" max="500"
-                                        value="100">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaGammaAuto" disabled></div>
-                                </div>
-
-                                <!-- White Balance -->
-                                <div class="props-row">
-                                    <span class="props-label">White Balance</span>
-                                    <input type="range" class="slider-custom" id="vpaWbSlider" min="2000" max="6500"
-                                        value="4000" disabled>
-                                    <input type="number" class="props-num-input" id="vpaWbNum" min="2000" max="6500"
-                                        value="4000" disabled>
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaWbAuto" checked title="Auto White Balance"></div>
-                                </div>
-
-                                <!-- Backlight Compensation -->
-                                <div class="props-row">
-                                    <span class="props-label">Backlight Comp</span>
-                                    <input type="range" class="slider-custom" id="vpaBacklightSlider" min="0" max="1"
-                                        value="0">
-                                    <input type="number" class="props-num-input" id="vpaBacklightNum" min="0" max="1"
-                                        value="0">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaBacklightAuto" disabled></div>
-                                </div>
-
-                                <!-- Gain -->
-                                <div class="props-row">
-                                    <span class="props-label">Gain</span>
-                                    <input type="range" class="slider-custom" id="vpaGainSlider" min="0" max="255"
-                                        value="0">
-                                    <input type="number" class="props-num-input" id="vpaGainNum" min="0" max="255"
-                                        value="0">
-                                    <div class="props-auto-cell"><input type="checkbox" class="props-auto-checkbox"
-                                            id="vpaGainAuto" disabled></div>
-                                </div>
+                                <button type="button" class="btn-overlay-close" id="btnCloseCamOverlay"
+                                    title="Close Settings">✕</button>
                             </div>
 
-                            <div class="props-footer">
-                                <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
-                                    <label
-                                        style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer;">
-                                        <input type="checkbox" class="props-auto-checkbox" id="vpaColorEnable" checked>
-                                        <span>ColorEnable</span>
-                                    </label>
-                                    <div style="display: inline-flex; align-items: center; gap: 8px;">
-                                        <span
-                                            style="font-size: 0.78rem; color: var(--text-secondary);">Anti-Flicker:</span>
-                                        <select class="select-custom" id="vpaPowerlineFreq"
-                                            style="padding: 4px 8px; font-size: 0.8rem;">
-                                            <option value="0">Disabled</option>
-                                            <option value="1" selected>50 Hz</option>
-                                            <option value="2">60 Hz</option>
-                                        </select>
+                            <div class="cam-overlay-body">
+                                <!-- Hardware Property & Stream Configuration Tabs -->
+                                <div class="props-tab-bar">
+                                    <button type="button" class="props-tab-btn active" id="tabBtnCamCtrl"
+                                        data-tab="tabCamCtrl">Camera Control</button>
+                                    <button type="button" class="props-tab-btn" id="tabBtnVpa" data-tab="tabVpa">Video
+                                        Proc
+                                        Amp</button>
+                                    <button type="button" class="props-tab-btn" id="tabBtnStreamCfg"
+                                        data-tab="tabStreamCfg">Stream Config</button>
+                                </div>
+
+                                <!-- Tab 1: Camera Control -->
+                                <div class="props-tab-content active" id="tabCamCtrl">
+                                    <div class="props-table-header">
+                                        <span>Property</span>
+                                        <span>Setting</span>
+                                        <span>Value</span>
+                                        <span>Auto</span>
+                                        <span style="text-align: center;">Reset</span>
+                                    </div>
+                                    <div class="props-table">
+                                        <!-- Zoom -->
+                                        <div class="props-row">
+                                            <span class="props-label">Zoom</span>
+                                            <input type="range" class="slider-custom" id="ctrlZoomSlider" min="100"
+                                                max="500" value="100">
+                                            <input type="number" class="props-num-input" id="ctrlZoomNum" min="100"
+                                                max="500" value="100">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="ctrlZoomAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlZoomSlider" data-target-num="ctrlZoomNum"
+                                                    data-default="100" title="Reset Zoom to 100">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Focus -->
+                                        <div class="props-row">
+                                            <span class="props-label">Focus</span>
+                                            <input type="range" class="slider-custom" id="ctrlFocusSlider" min="0"
+                                                max="250" value="0" disabled>
+                                            <input type="number" class="props-num-input" id="ctrlFocusNum" min="0"
+                                                max="250" value="0" disabled>
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="ctrlFocusAuto" checked
+                                                    title="Auto Focus"></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlFocusSlider" data-target-num="ctrlFocusNum"
+                                                    data-auto="ctrlFocusAuto" data-default="0" title="Reset Focus to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Exposure -->
+                                        <div class="props-row">
+                                            <span class="props-label">Exposure</span>
+                                            <input type="range" class="slider-custom" id="ctrlExpSlider" min="3"
+                                                max="2047" value="250" disabled>
+                                            <input type="number" class="props-num-input" id="ctrlExpNum" min="3"
+                                                max="2047" value="250" disabled>
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="ctrlExpAuto" checked
+                                                    title="Auto Exposure"></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlExpSlider" data-target-num="ctrlExpNum"
+                                                    data-auto="ctrlExpAuto" data-default="250"
+                                                    title="Reset Exposure to 250">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Aperture (Iris) -->
+                                        <div class="props-row">
+                                            <span class="props-label" style="opacity: 0.7;">Aperture</span>
+                                            <input type="range" class="slider-custom" id="ctrlIrisSlider" min="0"
+                                                max="10" value="0" disabled>
+                                            <input type="number" class="props-num-input" id="ctrlIrisNum" min="0"
+                                                max="10" value="0" disabled>
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="ctrlIrisAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlIrisSlider" data-target-num="ctrlIrisNum"
+                                                    data-default="0" title="Reset Aperture to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Pan -->
+                                        <div class="props-row">
+                                            <span class="props-label">Pan</span>
+                                            <input type="range" class="slider-custom" id="ctrlPanSlider" min="-36000"
+                                                max="36000" step="3600" value="0">
+                                            <input type="number" class="props-num-input" id="ctrlPanNum" min="-36000"
+                                                max="36000" step="3600" value="0">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlPanSlider" data-target-num="ctrlPanNum"
+                                                    data-default="0" title="Reset Pan to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Tilt -->
+                                        <div class="props-row">
+                                            <span class="props-label">Tilt</span>
+                                            <input type="range" class="slider-custom" id="ctrlTiltSlider" min="-36000"
+                                                max="36000" step="3600" value="0">
+                                            <input type="number" class="props-num-input" id="ctrlTiltNum" min="-36000"
+                                                max="36000" step="3600" value="0">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlTiltSlider" data-target-num="ctrlTiltNum"
+                                                    data-default="0" title="Reset Tilt to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Roll -->
+                                        <div class="props-row">
+                                            <span class="props-label" style="opacity: 0.7;">Roll</span>
+                                            <input type="range" class="slider-custom" id="ctrlRollSlider" min="0"
+                                                max="0" value="0" disabled>
+                                            <input type="number" class="props-num-input" id="ctrlRollNum" min="0"
+                                                max="0" value="0" disabled>
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="ctrlRollSlider" data-target-num="ctrlRollNum"
+                                                    data-default="0" title="Reset Roll to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="props-footer">
+                                        <label
+                                            style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer;">
+                                            <input type="checkbox" class="props-auto-checkbox" id="ctrlLowLightComp">
+                                            <span>Low Light Compensation (Logitech Dynamic FPS)</span>
+                                        </label>
+                                        <button type="button" class="btn-default-reset"
+                                            id="btnResetCamCtrlDefaults">Default</button>
                                     </div>
                                 </div>
-                                <button type="button" class="btn-default-reset"
-                                    id="btnResetVpaDefaults">Default</button>
+
+                                <!-- Tab 2: Video Proc Amp -->
+                                <div class="props-tab-content" id="tabVpa">
+                                    <div class="props-table-header">
+                                        <span>Property</span>
+                                        <span>Setting</span>
+                                        <span>Value</span>
+                                        <span>Auto</span>
+                                        <span style="text-align: center;">Reset</span>
+                                    </div>
+                                    <div class="props-table">
+                                        <!-- Brightness -->
+                                        <div class="props-row">
+                                            <span class="props-label">Brightness</span>
+                                            <input type="range" class="slider-custom" id="vpaBrightnessSlider" min="0"
+                                                max="255" value="128">
+                                            <input type="number" class="props-num-input" id="vpaBrightnessNum" min="0"
+                                                max="255" value="128">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaBrightnessAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaBrightnessSlider" data-target-num="vpaBrightnessNum"
+                                                    data-default="128" title="Reset Brightness to 128">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Contrast -->
+                                        <div class="props-row">
+                                            <span class="props-label">Contrast</span>
+                                            <input type="range" class="slider-custom" id="vpaContrastSlider" min="0"
+                                                max="255" value="128">
+                                            <input type="number" class="props-num-input" id="vpaContrastNum" min="0"
+                                                max="255" value="128">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaContrastAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaContrastSlider" data-target-num="vpaContrastNum"
+                                                    data-default="128" title="Reset Contrast to 128">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Hue -->
+                                        <div class="props-row">
+                                            <span class="props-label">Hue</span>
+                                            <input type="range" class="slider-custom" id="vpaHueSlider" min="-180"
+                                                max="180" value="0">
+                                            <input type="number" class="props-num-input" id="vpaHueNum" min="-180"
+                                                max="180" value="0">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaHueAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaHueSlider" data-target-num="vpaHueNum"
+                                                    data-default="0" title="Reset Hue to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Saturation -->
+                                        <div class="props-row">
+                                            <span class="props-label">Saturation</span>
+                                            <input type="range" class="slider-custom" id="vpaSaturationSlider" min="0"
+                                                max="255" value="128">
+                                            <input type="number" class="props-num-input" id="vpaSaturationNum" min="0"
+                                                max="255" value="128">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaSaturationAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaSaturationSlider" data-target-num="vpaSaturationNum"
+                                                    data-default="128" title="Reset Saturation to 128">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Sharpness -->
+                                        <div class="props-row">
+                                            <span class="props-label">Sharpness</span>
+                                            <input type="range" class="slider-custom" id="vpaSharpnessSlider" min="0"
+                                                max="255" value="128">
+                                            <input type="number" class="props-num-input" id="vpaSharpnessNum" min="0"
+                                                max="255" value="128">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaSharpnessAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaSharpnessSlider" data-target-num="vpaSharpnessNum"
+                                                    data-default="128" title="Reset Sharpness to 128">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Gamma -->
+                                        <div class="props-row">
+                                            <span class="props-label">Gamma</span>
+                                            <input type="range" class="slider-custom" id="vpaGammaSlider" min="100"
+                                                max="500" value="100">
+                                            <input type="number" class="props-num-input" id="vpaGammaNum" min="100"
+                                                max="500" value="100">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaGammaAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaGammaSlider" data-target-num="vpaGammaNum"
+                                                    data-default="100" title="Reset Gamma to 100">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- White Balance -->
+                                        <div class="props-row">
+                                            <span class="props-label">White Balance</span>
+                                            <input type="range" class="slider-custom" id="vpaWbSlider" min="2000"
+                                                max="6500" value="4000" disabled>
+                                            <input type="number" class="props-num-input" id="vpaWbNum" min="2000"
+                                                max="6500" value="4000" disabled>
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaWbAuto" checked
+                                                    title="Auto White Balance"></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaWbSlider" data-target-num="vpaWbNum"
+                                                    data-auto="vpaWbAuto" data-default="4000"
+                                                    title="Reset White Balance to 4000">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Backlight Compensation -->
+                                        <div class="props-row">
+                                            <span class="props-label">Backlight Comp</span>
+                                            <input type="range" class="slider-custom" id="vpaBacklightSlider" min="0"
+                                                max="1" value="0">
+                                            <input type="number" class="props-num-input" id="vpaBacklightNum" min="0"
+                                                max="1" value="0">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaBacklightAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaBacklightSlider" data-target-num="vpaBacklightNum"
+                                                    data-default="0" title="Reset Backlight Comp to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Gain -->
+                                        <div class="props-row">
+                                            <span class="props-label">Gain</span>
+                                            <input type="range" class="slider-custom" id="vpaGainSlider" min="0"
+                                                max="255" value="0">
+                                            <input type="number" class="props-num-input" id="vpaGainNum" min="0"
+                                                max="255" value="0">
+                                            <div class="props-auto-cell"><input type="checkbox"
+                                                    class="props-auto-checkbox" id="vpaGainAuto" disabled></div>
+                                            <div class="props-reset-cell">
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaGainSlider" data-target-num="vpaGainNum"
+                                                    data-default="0" title="Reset Gain to 0">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="props-footer">
+                                        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                                            <label
+                                                style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer;">
+                                                <input type="checkbox" class="props-auto-checkbox" id="vpaColorEnable"
+                                                    checked>
+                                                <span>ColorEnable</span>
+                                            </label>
+                                            <div style="display: inline-flex; align-items: center; gap: 8px;">
+                                                <span
+                                                    style="font-size: 0.78rem; color: var(--text-secondary);">Anti-Flicker:</span>
+                                                <select class="select-custom" id="vpaPowerlineFreq"
+                                                    style="padding: 4px 8px; font-size: 0.8rem;">
+                                                    <option value="0">Disabled</option>
+                                                    <option value="1" {% if app_defaults.anti_flicker_code==1
+                                                        %}selected{% endif %}>50 Hz</option>
+                                                    <option value="2" {% if app_defaults.anti_flicker_code==2
+                                                        %}selected{% endif %}>60 Hz</option>
+                                                </select>
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="vpaPowerlineFreq"
+                                                    data-default="{{ app_defaults.anti_flicker_code }}"
+                                                    title="Reset Anti-Flicker to default ({{ app_defaults.anti_flicker }} Hz)">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn-default-reset"
+                                            id="btnResetVpaDefaults">Default</button>
+                                    </div>
+                                </div>
+
+                                <!-- Tab 3: Stream Quick Configuration -->
+                                <div class="props-tab-content" id="tabStreamCfg">
+                                    <div class="overlay-quick-config">
+                                        <div class="field-group">
+                                            <label class="field-label" for="cameraSelect">Selected Camera</label>
+                                            <select id="cameraSelect" class="select-custom">
+                                                <option value="detecting">Loading cameras...</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="field-group">
+                                            <label class="field-label" for="resolutionSelect">Stream Resolution</label>
+                                            <select id="resolutionSelect" class="select-custom">
+                                                <option value="detecting">Loading camera hardware resolutions...
+                                                </option>
+                                            </select>
+                                        </div>
+
+                                        <div class="field-group">
+                                            <div
+                                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                                <label class="field-label" for="fpsSelect" style="margin: 0;">Target
+                                                    Frame Rate</label>
+                                                <button type="button" class="btn-setting-reset" data-target="fpsSelect"
+                                                    data-default="30" title="Reset Frame Rate to 30 FPS">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <select id="fpsSelect" class="select-custom">
+                                                <option value="5">5 FPS (Ultra Low Power)</option>
+                                                <option value="10">10 FPS (Energy Saver)</option>
+                                                <option value="15">15 FPS (Balanced)</option>
+                                                <option value="20">20 FPS</option>
+                                                <option value="30" selected>30 FPS (High Performance)</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="field-group">
+                                            <div
+                                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                                <label class="field-label" for="digitalZoomSlider" style="margin: 0;">
+                                                    Digital Zoom
+                                                </label>
+                                                <div style="display: flex; align-items: center; gap: 6px;">
+                                                    <span class="field-val-badge" id="digitalZoomBadge">1.0x</span>
+                                                    <button type="button" class="btn-setting-reset"
+                                                        data-target="digitalZoomSlider" data-badge="digitalZoomBadge"
+                                                        data-badge-suffix="x" data-default="1.0"
+                                                        title="Reset Digital Zoom to 1.0x">
+                                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                            stroke="currentColor" stroke-width="2.5"
+                                                            stroke-linecap="round" stroke-linejoin="round">
+                                                            <path
+                                                                d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                            <path d="M3 3v5h5" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <input type="range" id="digitalZoomSlider" class="slider-custom" min="1.0"
+                                                max="3.0" step="0.1" value="1.0">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-
-                        <!-- Tab 3: Stream Quick Configuration -->
-                        <div class="props-tab-content" id="tabStreamCfg">
-                            <div class="overlay-quick-config">
-                                <div class="field-group">
-                                    <label class="field-label" for="cameraSelect">Selected Camera</label>
-                                    <select id="cameraSelect" class="select-custom">
-                                        <option value="detecting">Loading cameras...</option>
-                                    </select>
-                                </div>
-
-                                <div class="field-group">
-                                    <label class="field-label" for="resolutionSelect">Stream Resolution</label>
-                                    <select id="resolutionSelect" class="select-custom">
-                                        <option value="detecting">Loading camera hardware resolutions...</option>
-                                    </select>
-                                </div>
-
-                                <div class="field-group">
-                                    <label class="field-label" for="fpsSelect">Target Frame Rate</label>
-                                    <select id="fpsSelect" class="select-custom">
-                                        <option value="5">5 FPS (Ultra Low Power)</option>
-                                        <option value="10">10 FPS (Energy Saver)</option>
-                                        <option value="15">15 FPS (Balanced)</option>
-                                        <option value="20">20 FPS</option>
-                                        <option value="30" selected>30 FPS (High Performance)</option>
-                                    </select>
-                                </div>
-
-                                <div class="field-group">
-                                    <label class="field-label" for="digitalZoomSlider">
-                                        Digital Zoom
-                                        <span class="field-val-badge" id="digitalZoomBadge">1.0x</span>
-                                    </label>
-                                    <input type="range" id="digitalZoomSlider" class="slider-custom" min="1.0" max="3.0"
-                                        step="0.1" value="1.0">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
                     </div> <!-- /viewportCard -->
 
                     <!-- Chamber Dedicated Toolbar (6 Controls: Toggle, Settings, Fullscreen, Flip H, Flip V, Grid) -->
@@ -487,7 +733,8 @@
                         </button>
                         <button class="btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                                <path
+                                    d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
                             </svg>
                             <span>Fullscreen</span>
                         </button>
@@ -516,7 +763,8 @@
                 <!-- SLOT 2: Local Device Camera (Webcam) -->
                 <div class="camera-slot slot-device hidden" id="slotDevice">
                     <div class="slot-badge-header">
-                        <span class="slot-badge-title"><span class="dot-online device-dot"></span> Device Camera (Browser)</span>
+                        <span class="slot-badge-title"><span class="dot-online device-dot"></span> Device Camera
+                            (Browser)</span>
                     </div>
 
                     <!-- Device Viewport Screen -->
@@ -526,7 +774,8 @@
                         <!-- Standby Overlay -->
                         <div class="device-standby-overlay" id="deviceStandbyOverlay">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" opacity="0.6">
-                                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                                <path
+                                    d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
                             </svg>
                             <span>Device Camera Starting...</span>
                         </div>
@@ -553,7 +802,15 @@
 
                         <!-- Rule of Thirds Framing Grid -->
                         <div class="framing-grid" id="framingGridDevice">
-                            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
+                            <div></div>
                         </div>
 
                         <!-- Device Camera Pro Controls Overlay Drawer -->
@@ -585,7 +842,20 @@
                                     </select>
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceRotateSelect">Rotation</label>
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceRotateSelect"
+                                            style="margin: 0;">Rotation</label>
+                                        <button type="button" class="btn-setting-reset" data-target="deviceRotateSelect"
+                                            data-default="0" title="Reset Rotation to 0°">
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                <path d="M3 3v5h5" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                     <select id="deviceRotateSelect" class="select-custom">
                                         <option value="0" selected>0° (Normal)</option>
                                         <option value="90">90° (Clockwise)</option>
@@ -594,59 +864,186 @@
                                     </select>
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceFocusModeSelect">Focus / Auto Focus</label>
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceFitSelect" style="margin: 0;">Framing /
+                                            Fit Mode</label>
+                                        <button type="button" class="btn-setting-reset" data-target="deviceFitSelect"
+                                            data-default="{{ app_defaults.default_device_cam_fit }}"
+                                            title="Reset Framing to {{ 'Fill (Crop 16:9)' if app_defaults.default_device_cam_fit == 'cover' else 'Fit' }}">
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                <path d="M3 3v5h5" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <select id="deviceFitSelect" class="select-custom">
+                                        <option value="cover" {% if app_defaults.default_device_cam_fit=='cover'
+                                            %}selected{% endif %}>Fill (Crop to 16:9)</option>
+                                        <option value="contain" {% if app_defaults.default_device_cam_fit=='contain'
+                                            %}selected{% endif %}>Fit (No Crop — 100% Match Preview)</option>
+                                    </select>
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceFocusModeSelect" style="margin: 0;">Focus
+                                            / Auto Focus</label>
+                                        <button type="button" class="btn-setting-reset"
+                                            data-target="deviceFocusModeSelect" data-default="continuous"
+                                            title="Reset Focus to Auto Focus">
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                <path d="M3 3v5h5" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                     <select id="deviceFocusModeSelect" class="select-custom">
                                         <option value="continuous" selected>Auto Focus (Continuous)</option>
                                         <option value="manual">Manual Focus</option>
                                     </select>
                                 </div>
-                                <div class="field-group" id="groupDeviceFocusDistance" style="margin-bottom: 12px; display: none;">
-                                    <label class="field-label" for="deviceFocusDistanceSlider">
-                                        Focus Distance
-                                        <span class="field-val-badge" id="deviceFocusDistanceBadge">0</span>
-                                    </label>
-                                    <input type="range" id="deviceFocusDistanceSlider" class="slider-custom" min="0" max="100"
-                                        value="0">
+                                <div class="field-group" id="groupDeviceFocusDistance"
+                                    style="margin-bottom: 12px; display: none;">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceFocusDistanceSlider"
+                                            style="margin: 0;">Focus Distance</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceFocusDistanceBadge">0</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceFocusDistanceSlider"
+                                                data-badge="deviceFocusDistanceBadge" data-default="0"
+                                                title="Reset Focus Distance to 0">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="range" id="deviceFocusDistanceSlider" class="slider-custom" min="0"
+                                        max="100" value="0">
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceZoomSlider">
-                                        Digital Zoom
-                                        <span class="field-val-badge" id="deviceZoomBadge">1.0x</span>
-                                    </label>
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceZoomSlider" style="margin: 0;">Digital
+                                            Zoom</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceZoomBadge">1.0x</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceZoomSlider" data-badge="deviceZoomBadge"
+                                                data-badge-suffix="x" data-default="1.0"
+                                                title="Reset Digital Zoom to 1.0x">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
                                     <input type="range" id="deviceZoomSlider" class="slider-custom" min="1.0" max="3.0"
                                         step="0.1" value="1.0">
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceBrightnessSlider">
-                                        Brightness
-                                        <span class="field-val-badge" id="deviceBrightnessBadge">100%</span>
-                                    </label>
-                                    <input type="range" id="deviceBrightnessSlider" class="slider-custom" min="50" max="200"
-                                        value="100">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceBrightnessSlider"
+                                            style="margin: 0;">Brightness</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceBrightnessBadge">100%</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceBrightnessSlider" data-badge="deviceBrightnessBadge"
+                                                data-badge-suffix="%" data-default="100"
+                                                title="Reset Brightness to 100%">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="range" id="deviceBrightnessSlider" class="slider-custom" min="50"
+                                        max="200" value="100">
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceContrastSlider">
-                                        Contrast
-                                        <span class="field-val-badge" id="deviceContrastBadge">100%</span>
-                                    </label>
-                                    <input type="range" id="deviceContrastSlider" class="slider-custom" min="50" max="200"
-                                        value="100">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceContrastSlider"
+                                            style="margin: 0;">Contrast</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceContrastBadge">100%</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceContrastSlider" data-badge="deviceContrastBadge"
+                                                data-badge-suffix="%" data-default="100" title="Reset Contrast to 100%">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="range" id="deviceContrastSlider" class="slider-custom" min="50"
+                                        max="200" value="100">
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceSaturationSlider">
-                                        Saturation
-                                        <span class="field-val-badge" id="deviceSaturationBadge">100%</span>
-                                    </label>
-                                    <input type="range" id="deviceSaturationSlider" class="slider-custom" min="0" max="200"
-                                        value="100">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceSaturationSlider"
+                                            style="margin: 0;">Saturation</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceSaturationBadge">100%</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceSaturationSlider" data-badge="deviceSaturationBadge"
+                                                data-badge-suffix="%" data-default="100"
+                                                title="Reset Saturation to 100%">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="range" id="deviceSaturationSlider" class="slider-custom" min="0"
+                                        max="200" value="100">
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceSharpnessSlider">
-                                        Sharpness
-                                        <span class="field-val-badge" id="deviceSharpnessBadge">100%</span>
-                                    </label>
-                                    <input type="range" id="deviceSharpnessSlider" class="slider-custom" min="50" max="200"
-                                        value="100">
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceSharpnessSlider"
+                                            style="margin: 0;">Sharpness</label>
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span class="field-val-badge" id="deviceSharpnessBadge">100%</span>
+                                            <button type="button" class="btn-setting-reset"
+                                                data-target="deviceSharpnessSlider" data-badge="deviceSharpnessBadge"
+                                                data-badge-suffix="%" data-default="100"
+                                                title="Reset Sharpness to 100%">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                    <path d="M3 3v5h5" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="range" id="deviceSharpnessSlider" class="slider-custom" min="50"
+                                        max="200" value="100">
                                 </div>
                             </div>
                         </div>
@@ -670,13 +1067,15 @@
                         </button>
                         <button class="btn-icon" id="btnDeviceRotate" title="Rotate 90° (0°, 90°, 180°, 270°)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M7.11 8.53L5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.51-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.89-1.6-1.01-2.47zm1.02 5.47l-1.41 1.41C7.14 21.07 8.76 21.84 10.5 21.97v-2.02c-1.25-.13-2.43-.69-3.39-1.48zM13.5 21.97c1.74-.13 3.36-.9 4.8-2.09l-1.41-1.41c-.96.79-2.14 1.35-3.39 1.48v2.02zm4.41-5.08l1.41 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.12.87-.49 1.72-1.01 2.48zm1.02-4.89h2.02c-.17-1.39-.72-2.73-1.62-3.89l-1.41 1.42c.52.75.89 1.6 1.01 2.47zM12 2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8s8 3.59 8 8h2c0-5.52-4.48-10-10-10z" />
+                                <path
+                                    d="M7.11 8.53L5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.51-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.89-1.6-1.01-2.47zm1.02 5.47l-1.41 1.41C7.14 21.07 8.76 21.84 10.5 21.97v-2.02c-1.25-.13-2.43-.69-3.39-1.48zM13.5 21.97c1.74-.13 3.36-.9 4.8-2.09l-1.41-1.41c-.96.79-2.14 1.35-3.39 1.48v2.02zm4.41-5.08l1.41 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.12.87-.49 1.72-1.01 2.48zm1.02-4.89h2.02c-.17-1.39-.72-2.73-1.62-3.89l-1.41 1.42c.52.75.89 1.6 1.01 2.47zM12 2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8s8 3.59 8 8h2c0-5.52-4.48-10-10-10z" />
                             </svg>
                             <span id="lblDeviceRotate">Rotate</span>
                         </button>
                         <button class="btn-icon" id="btnDeviceFullscreen" title="Toggle Fullscreen">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                                <path
+                                    d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
                             </svg>
                             <span>Fullscreen</span>
                         </button>
@@ -703,15 +1102,18 @@
                 </div> <!-- /slotDevice -->
             </div> <!-- /multiCameraStage -->
 
-            <!-- Unified Multi-Camera Master Action Bar -->
+            <!-- Unified Multi-Camera Master Action Bar / Mobile Assistive Touch Floating Hub -->
             <div class="unified-action-toolbar" id="unifiedActionToolbar">
+                <div class="floating-drag-handle" id="floatingDragHandle" title="Drag to Reposition (Assistive Touch)">
+                    <span class="drag-grip-dots"></span>
+                </div>
                 <button class="btn-action-master" id="btnSnapshot" disabled
                     title="Camera is disabled (enable camera to capture snapshot)">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                         <path
                             d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
                     </svg>
-                    <span id="lblSnapshotText">Capture Snapshot</span>
+                    <span id="lblSnapshotText">Catch It!</span>
                 </button>
                 <button class="btn-action-master" id="btnOcrCapture" title="OCR Text Recognition">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -1065,7 +1467,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=4.3"></script>
+    <script src="/static/js/app.js?v=4.6"></script>
 </body>
 
 </html>
