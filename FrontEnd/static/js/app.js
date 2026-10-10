@@ -2229,39 +2229,74 @@ function drawTwibbonBackground(ctx, totalWidth, totalHeight, border, timestampSt
     ctx.lineWidth = 1;
     ctx.strokeRect(1, 1, totalWidth - 2, totalHeight - 2);
 
-    // 3. Scattered tiny watermark font: LumenLux with timestamp (e.g. 10 Oktober 2026@13:15:00)
-    const scatterText = `LumenLux • ${timestampStr}`;
-    ctx.font = "600 11px 'Outfit', 'Inter', system-ui, sans-serif";
-    ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+    // 3. Dense scattered tiny watermark: LumenLux with timestamp (e.g. 10 Oktober 2026@13:15:00)
+    const scatterText = `✦ LumenLux • ${timestampStr} ✦`;
+    ctx.font = "600 8.5px 'JetBrains Mono', 'Outfit', 'Inter', monospace, sans-serif";
     ctx.textBaseline = "middle";
 
-    // Top margin row
-    const stepX = 340;
-    for (let x = border + 20; x < totalWidth - border; x += stepX) {
-        ctx.fillText(`✦ ${scatterText} ✦`, x, border / 2);
+    const textWidth = ctx.measureText(scatterText).width;
+    const step = Math.round(textWidth + 24); // Compact gap between items for dense scatter
+    const badgeReservedWidth = 230; // Room reserved on top-right for the official badge
+
+    // --- TOP BORDER: Two Staggered Micro-Tracks ---
+    for (let x = 12; x < totalWidth - badgeReservedWidth; x += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+        ctx.fillText(scatterText, x, 16);
+    }
+    for (let x = 12 + Math.round(step * 0.5); x < totalWidth - badgeReservedWidth; x += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.28)";
+        ctx.fillText(scatterText, x, 34);
     }
 
-    // Bottom margin row (leaves room on right for the official stamp)
-    const stopX = totalWidth - 260;
-    for (let x = border + 20; x < stopX; x += stepX) {
-        ctx.fillText(`✦ ${scatterText} ✦`, x, totalHeight - (border / 2));
+    // --- BOTTOM BORDER: Two Staggered Micro-Tracks ---
+    for (let x = 12; x < totalWidth - 12; x += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+        ctx.fillText(scatterText, x, totalHeight - 34);
+    }
+    for (let x = 12 + Math.round(step * 0.5); x < totalWidth - 12; x += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.28)";
+        ctx.fillText(scatterText, x, totalHeight - 16);
     }
 
-    // Left border (vertical text)
+    // --- LEFT BORDER: Two Staggered Vertical Micro-Tracks (rotated 90deg) ---
+    // Track 1 (outer)
     ctx.save();
-    ctx.translate(border / 2, border + 30);
+    ctx.translate(16, border + 15);
     ctx.rotate(Math.PI / 2);
-    for (let x = 0; x < totalHeight - (border * 2) - 60; x += stepX) {
-        ctx.fillText(`✦ ${scatterText} ✦`, x, 0);
+    for (let y = 0; y < totalHeight - (border * 2) - 30; y += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+        ctx.fillText(scatterText, y, 0);
     }
     ctx.restore();
 
-    // Right border (vertical text)
+    // Track 2 (inner, staggered)
     ctx.save();
-    ctx.translate(totalWidth - (border / 2), border + 30);
+    ctx.translate(34, border + 15 + Math.round(step * 0.5));
     ctx.rotate(Math.PI / 2);
-    for (let x = 0; x < totalHeight - (border * 2) - 60; x += stepX) {
-        ctx.fillText(`✦ ${scatterText} ✦`, x, 0);
+    for (let y = 0; y < totalHeight - (border * 2) - 30; y += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.28)";
+        ctx.fillText(scatterText, y, 0);
+    }
+    ctx.restore();
+
+    // --- RIGHT BORDER: Two Staggered Vertical Micro-Tracks (rotated 90deg) ---
+    // Track 1 (inner)
+    ctx.save();
+    ctx.translate(totalWidth - 34, border + 15);
+    ctx.rotate(Math.PI / 2);
+    for (let y = 0; y < totalHeight - (border * 2) - 30; y += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.28)";
+        ctx.fillText(scatterText, y, 0);
+    }
+    ctx.restore();
+
+    // Track 2 (outer, staggered)
+    ctx.save();
+    ctx.translate(totalWidth - 16, border + 15 + Math.round(step * 0.5));
+    ctx.rotate(Math.PI / 2);
+    for (let y = 0; y < totalHeight - (border * 2) - 30; y += step) {
+        ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+        ctx.fillText(scatterText, y, 0);
     }
     ctx.restore();
 }
@@ -2320,7 +2355,7 @@ function drawLumenLuxTwibbonStamp(ctx, totalWidth, totalHeight, border) {
     const badgeW = 200;
     const badgeH = 38;
     const badgeX = totalWidth - badgeW - 14;
-    const badgeY = totalHeight - badgeH - 6;
+    const badgeY = Math.round((border - badgeH) / 2); // Positioned inside top-right border
 
     ctx.save();
 
