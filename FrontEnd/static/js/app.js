@@ -54,6 +54,23 @@ const state = {
         },
         controls: {}
     },
+    // Local Device Camera state (Browser webcam)
+    deviceCamera: {
+        enabled: false,
+        active: false,
+        stream: null,
+        deviceId: null,
+        resolution: "1920x1080",
+        digital_zoom: 1.0,
+        flip_h: false,
+        flip_v: false,
+        grid_active: false,
+        filters: {
+            brightness: 100,
+            contrast: 100,
+            saturation: 100
+        }
+    },
     system: {
         online: false,
         latency_ms: 0
@@ -78,6 +95,13 @@ function loadSavedConfig() {
                 delete parsed.camera.enabled;
                 Object.assign(state.camera, parsed.camera);
             }
+            if (parsed.deviceCamera) {
+                // Strip saved active state: camera only starts when user checks checkbox
+                delete parsed.deviceCamera.enabled;
+                delete parsed.deviceCamera.active;
+                delete parsed.deviceCamera.stream;
+                Object.assign(state.deviceCamera, parsed.deviceCamera);
+            }
             console.log("[Storage] User configuration loaded from browser storage:", parsed);
         } else {
             console.log("[Config] Initialized with .env defaults:", envDefaults);
@@ -100,6 +124,15 @@ function saveConfig() {
                 flip_v: state.camera.flip_v,
                 grid_active: state.camera.grid_active,
                 filters: state.camera.filters
+            },
+            deviceCamera: {
+                deviceId: state.deviceCamera.deviceId,
+                resolution: state.deviceCamera.resolution,
+                digital_zoom: state.deviceCamera.digital_zoom,
+                flip_h: state.deviceCamera.flip_h,
+                flip_v: state.deviceCamera.flip_v,
+                grid_active: state.deviceCamera.grid_active,
+                filters: state.deviceCamera.filters
             }
         }));
     } catch (e) {
@@ -1025,15 +1058,7 @@ function setupCameraListeners() {
             const span = btnToggle.querySelector("span");
             if (span) span.textContent = state.camera.enabled ? "Disable Cam" : "Enable Cam";
         }
-
-        const btnSnapshot = document.getElementById("btnSnapshot");
-        if (btnSnapshot) {
-            btnSnapshot.disabled = !state.camera.enabled;
-            btnSnapshot.classList.toggle("disabled", !state.camera.enabled);
-            btnSnapshot.title = state.camera.enabled 
-                ? "Capture high-resolution snapshot" 
-                : "Camera is disabled (enable camera to capture snapshot)";
-        }
+        updateSnapshotButtonState();
     }
 
     // Expose for pollSystemStatus
@@ -1144,31 +1169,10 @@ function setupCameraListeners() {
         }
     });
 
-    // Snapshot Download (Guarded against disabled camera)
+    // Unified Multi-Camera Snapshot (Combined Chamber + Device or Single Cam with 50px Twibbon)
     const btnSnapshot = document.getElementById("btnSnapshot");
-    btnSnapshot?.addEventListener("click", async () => {
-        if (!state.camera.enabled) {
-            showToast("Camera is disabled — enable camera to capture snapshot");
-            return;
-        }
-        try {
-            showToast("Capturing high-resolution snapshot...");
-            const res = await fetch("/api/camera/snapshot");
-            if (!res.ok) throw new Error("Snapshot error");
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-            a.download = `LumenLux_snapshot_${timestamp}.jpg`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            showToast("Snapshot downloaded successfully!");
-        } catch (e) {
-            showToast("Snapshot error: " + e.message);
-        }
+    btnSnapshot?.addEventListener("click", () => {
+        captureMultiCameraSnapshot();
     });
 
     // DirectShow / V4L2 Hardware Controls (Camera Control & Video Proc Amp tabs)
@@ -1846,13 +1850,719 @@ function setupResetToDefaults() {
             window.location.href = window.location.pathname;
         }, 400);
     });
+}
 
-    if (new URLSearchParams(window.location.search).has("open_reset")) {
-        setTimeout(() => openModal(), 200);
+// ==========================================================================
+// MULTI-CAMERA & LOCAL DEVICE CAMERA (BROWSER WEBCAM) ENGINE
+// ==========================================================================
+
+function updateSnapshotButtonState() {
+    const btnSnapshot = document.getElementById("btnSnapshot");
+    const lblSnapshotText = document.getElementById("lblSnapshotText");
+    if (!btnSnapshot) return;
+    const canSnapshot = state.camera.enabled || (state.deviceCamera && state.deviceCamera.active);
+    btnSnapshot.disabled = !canSnapshot;
+    btnSnapshot.classList.toggle("disabled", !canSnapshot);
+
+    if (state.camera.enabled && state.deviceCamera?.active) {
+        btnSnapshot.title = "Capture combined dual-camera snapshot (Chamber + Device)";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Dual Snapshot";
+    } else if (state.camera.enabled) {
+        btnSnapshot.title = "Capture Chamber camera snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Chamber Snapshot";
+    } else if (state.deviceCamera?.active) {
+        btnSnapshot.title = "Capture Device camera snapshot";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Device Snapshot";
+    } else {
+        btnSnapshot.title = "Cameras are disabled (enable camera to capture snapshot)";
+        if (lblSnapshotText) lblSnapshotText.textContent = "Capture Snapshot";
     }
 }
 
+function applyDeviceViewportTransforms() {
+    const video = document.getElementById("deviceCameraVideo");
+    if (!video) return;
 
+    const scale = state.deviceCamera.digital_zoom || 1.0;
+    const scaleX = state.deviceCamera.flip_h ? -scale : scale;
+    const scaleY = state.deviceCamera.flip_v ? -scale : scale;
+    video.style.transform = `scale(${scaleX}, ${scaleY})`;
+
+    const { brightness, contrast } = state.deviceCamera.filters;
+    video.style.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+}
+
+async function enumerateDeviceCameras() {
+    try {
+        const select = document.getElementById("deviceSourceSelect");
+        if (!select || !navigator.mediaDevices?.enumerateDevices) return;
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(d => d.kind === "videoinput");
+
+        select.innerHTML = "";
+        videoInputs.forEach((dev, idx) => {
+            const opt = document.createElement("option");
+            opt.value = dev.deviceId;
+            opt.textContent = dev.label || `Camera ${idx + 1}`;
+            if (dev.deviceId === state.deviceCamera.deviceId) {
+                opt.selected = true;
+            }
+            select.appendChild(opt);
+        });
+
+        if (videoInputs.length > 0 && !state.deviceCamera.deviceId) {
+            state.deviceCamera.deviceId = videoInputs[0].deviceId;
+        }
+
+        const badge = document.getElementById("deviceCamBadge");
+        if (badge && select.options[select.selectedIndex]) {
+            badge.textContent = select.options[select.selectedIndex].text;
+        }
+    } catch (e) {
+        console.warn("Could not enumerate device cameras:", e);
+    }
+}
+
+async function startDeviceCameraStream() {
+    const stage = document.getElementById("multiCameraStage");
+    const slotDevice = document.getElementById("slotDevice");
+    const video = document.getElementById("deviceCameraVideo");
+    const standby = document.getElementById("deviceStandbyOverlay");
+    const chk = document.getElementById("chkEnableDeviceCam");
+
+    try {
+        showToast("Requesting browser device camera access...");
+        const [reqW, reqH] = (state.deviceCamera.resolution || "1920x1080").split("x").map(Number);
+        const constraints = {
+            video: {
+                width: { ideal: reqW || 1920 },
+                height: { ideal: reqH || 1080 }
+            },
+            audio: false
+        };
+        if (state.deviceCamera.deviceId && state.deviceCamera.deviceId !== "default") {
+            constraints.video.deviceId = { exact: state.deviceCamera.deviceId };
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        state.deviceCamera.stream = stream;
+        state.deviceCamera.enabled = true;
+        state.deviceCamera.active = true;
+
+        if (video) {
+            video.srcObject = stream;
+            await video.play().catch(() => {});
+        }
+
+        if (slotDevice) slotDevice.classList.remove("hidden");
+        if (stage) stage.classList.add("dual-active");
+        if (standby) standby.classList.add("hidden");
+
+        const btnToggleStream = document.getElementById("btnToggleDeviceCamStream");
+        if (btnToggleStream) {
+            btnToggleStream.classList.remove("danger");
+            const span = btnToggleStream.querySelector("span");
+            if (span) span.textContent = "Disable Cam";
+        }
+
+        await enumerateDeviceCameras();
+        applyDeviceViewportTransforms();
+        updateSnapshotButtonState();
+        showToast("Device camera activated successfully!");
+    } catch (err) {
+        console.error("Device camera access error:", err);
+        state.deviceCamera.enabled = false;
+        state.deviceCamera.active = false;
+        if (chk) chk.checked = false;
+        if (slotDevice) slotDevice.classList.add("hidden");
+        if (stage) stage.classList.remove("dual-active");
+        updateSnapshotButtonState();
+        showToast("Camera access rejected or unavailable: " + err.message);
+    }
+}
+
+function stopDeviceCameraStream() {
+    const stage = document.getElementById("multiCameraStage");
+    const slotDevice = document.getElementById("slotDevice");
+    const video = document.getElementById("deviceCameraVideo");
+    const standby = document.getElementById("deviceStandbyOverlay");
+    const chk = document.getElementById("chkEnableDeviceCam");
+
+    if (state.deviceCamera.stream) {
+        state.deviceCamera.stream.getTracks().forEach(track => track.stop());
+        state.deviceCamera.stream = null;
+    }
+    state.deviceCamera.enabled = false;
+    state.deviceCamera.active = false;
+
+    if (video) {
+        video.srcObject = null;
+    }
+    if (chk) chk.checked = false;
+    if (slotDevice) slotDevice.classList.add("hidden");
+    if (stage) stage.classList.remove("dual-active");
+    if (standby) standby.classList.remove("hidden");
+
+    updateSnapshotButtonState();
+    showToast("Device camera turned off");
+}
+
+function setupDeviceCameraManager() {
+    const chk = document.getElementById("chkEnableDeviceCam");
+    const overlay = document.getElementById("deviceSettingsOverlay");
+    const btnOpenOverlay = document.getElementById("btnToggleDeviceOverlay");
+    const btnToolbarSettings = document.getElementById("btnDeviceSettings");
+    const btnCloseOverlay = document.getElementById("btnCloseDeviceOverlay");
+
+    chk?.addEventListener("change", (e) => {
+        if (e.target.checked) {
+            startDeviceCameraStream();
+        } else {
+            stopDeviceCameraStream();
+        }
+    });
+
+    function toggleDeviceOverlay(open) {
+        if (!overlay) return;
+        const willOpen = typeof open === "boolean" ? open : !overlay.classList.contains("open");
+        overlay.classList.toggle("open", willOpen);
+    }
+
+    btnOpenOverlay?.addEventListener("click", () => toggleDeviceOverlay(true));
+    btnToolbarSettings?.addEventListener("click", () => toggleDeviceOverlay(true));
+    btnCloseOverlay?.addEventListener("click", () => toggleDeviceOverlay(false));
+
+    // Device Stream Toggle (Mute / Unmute video tracks)
+    const btnToggleStream = document.getElementById("btnToggleDeviceCamStream");
+    btnToggleStream?.addEventListener("click", () => {
+        if (!state.deviceCamera.stream) {
+            startDeviceCameraStream();
+            return;
+        }
+        const tracks = state.deviceCamera.stream.getVideoTracks();
+        if (tracks.length > 0) {
+            const nextState = !tracks[0].enabled;
+            tracks.forEach(t => t.enabled = nextState);
+            state.deviceCamera.active = nextState;
+            btnToggleStream.classList.toggle("danger", !nextState);
+            const span = btnToggleStream.querySelector("span");
+            if (span) span.textContent = nextState ? "Disable Cam" : "Enable Cam";
+
+            const standby = document.getElementById("deviceStandbyOverlay");
+            if (standby) standby.classList.toggle("hidden", nextState);
+
+            updateSnapshotButtonState();
+            showToast(nextState ? "Device camera resumed" : "Device camera paused");
+        }
+    });
+
+    // Flip Controls
+    const btnFlipH = document.getElementById("btnDeviceFlipH");
+    btnFlipH?.classList.toggle("active", state.deviceCamera.flip_h);
+    btnFlipH?.addEventListener("click", () => {
+        state.deviceCamera.flip_h = !state.deviceCamera.flip_h;
+        btnFlipH.classList.toggle("active", state.deviceCamera.flip_h);
+        applyDeviceViewportTransforms();
+        saveConfig();
+    });
+
+    const btnFlipV = document.getElementById("btnDeviceFlipV");
+    btnFlipV?.classList.toggle("active", state.deviceCamera.flip_v);
+    btnFlipV?.addEventListener("click", () => {
+        state.deviceCamera.flip_v = !state.deviceCamera.flip_v;
+        btnFlipV.classList.toggle("active", state.deviceCamera.flip_v);
+        applyDeviceViewportTransforms();
+        saveConfig();
+    });
+
+    // Grid Overlay
+    const btnGrid = document.getElementById("btnDeviceToggleGrid");
+    const gridEl = document.getElementById("framingGridDevice");
+    btnGrid?.classList.toggle("active", state.deviceCamera.grid_active);
+    gridEl?.classList.toggle("active", state.deviceCamera.grid_active);
+    btnGrid?.addEventListener("click", () => {
+        state.deviceCamera.grid_active = !state.deviceCamera.grid_active;
+        btnGrid.classList.toggle("active", state.deviceCamera.grid_active);
+        gridEl.classList.toggle("active", state.deviceCamera.grid_active);
+        saveConfig();
+    });
+
+    // Fullscreen
+    const btnFullscreen = document.getElementById("btnDeviceFullscreen");
+    const deviceCard = document.getElementById("deviceViewportCard");
+    btnFullscreen?.addEventListener("click", () => {
+        if (!document.fullscreenElement) {
+            deviceCard.requestFullscreen().catch(err => console.log(err));
+        } else {
+            document.exitFullscreen();
+        }
+    });
+
+    // Settings Inputs
+    const sourceSelect = document.getElementById("deviceSourceSelect");
+    sourceSelect?.addEventListener("change", (e) => {
+        state.deviceCamera.deviceId = e.target.value;
+        saveConfig();
+        if (state.deviceCamera.enabled) {
+            startDeviceCameraStream();
+        }
+    });
+
+    const resSelect = document.getElementById("deviceResSelect");
+    if (resSelect && state.deviceCamera.resolution) {
+        resSelect.value = state.deviceCamera.resolution;
+    }
+    resSelect?.addEventListener("change", (e) => {
+        state.deviceCamera.resolution = e.target.value;
+        saveConfig();
+        if (state.deviceCamera.enabled) {
+            startDeviceCameraStream();
+        }
+    });
+
+    const zoomSlider = document.getElementById("deviceZoomSlider");
+    const zoomBadge = document.getElementById("deviceZoomBadge");
+    if (zoomSlider && zoomBadge) {
+        zoomSlider.value = state.deviceCamera.digital_zoom || 1.0;
+        zoomBadge.textContent = `${(state.deviceCamera.digital_zoom || 1.0).toFixed(1)}x`;
+        zoomSlider.addEventListener("input", (e) => {
+            state.deviceCamera.digital_zoom = parseFloat(e.target.value);
+            zoomBadge.textContent = `${state.deviceCamera.digital_zoom.toFixed(1)}x`;
+            applyDeviceViewportTransforms();
+            saveConfig();
+        });
+    }
+
+    const brightSlider = document.getElementById("deviceBrightnessSlider");
+    const brightBadge = document.getElementById("deviceBrightnessBadge");
+    if (brightSlider && brightBadge) {
+        brightSlider.value = state.deviceCamera.filters.brightness || 100;
+        brightBadge.textContent = `${brightSlider.value}%`;
+        brightSlider.addEventListener("input", (e) => {
+            state.deviceCamera.filters.brightness = parseInt(e.target.value, 10);
+            brightBadge.textContent = `${state.deviceCamera.filters.brightness}%`;
+            applyDeviceViewportTransforms();
+            saveConfig();
+        });
+    }
+
+    const contrastSlider = document.getElementById("deviceContrastSlider");
+    const contrastBadge = document.getElementById("deviceContrastBadge");
+    if (contrastSlider && contrastBadge) {
+        contrastSlider.value = state.deviceCamera.filters.contrast || 100;
+        contrastBadge.textContent = `${contrastSlider.value}%`;
+        contrastSlider.addEventListener("input", (e) => {
+            state.deviceCamera.filters.contrast = parseInt(e.target.value, 10);
+            contrastBadge.textContent = `${state.deviceCamera.filters.contrast}%`;
+            applyDeviceViewportTransforms();
+            saveConfig();
+        });
+    }
+}
+
+// ==========================================================================
+// COMBINED MULTI-CAMERA SNAPSHOT & 50px TWIBBON COMPOSITOR
+// ==========================================================================
+
+function formatIndonesianTimestamp(date = new Date()) {
+    const months = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ];
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const mins = String(date.getMinutes()).padStart(2, "0");
+    const secs = String(date.getSeconds()).padStart(2, "0");
+    return `${day} ${month} ${year}@${hours}:${mins}:${secs}`;
+}
+
+function loadImageFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(img);
+        };
+        img.onerror = (e) => {
+            URL.revokeObjectURL(url);
+            reject(e);
+        };
+        img.src = url;
+    });
+}
+
+function downloadCanvasImage(canvas, filename) {
+    canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, "image/jpeg", 0.95);
+}
+
+function drawTwibbonBackground(ctx, totalWidth, totalHeight, border, timestampStr) {
+    // 1. Rich dark gradient background matching app aesthetics
+    const bgGrad = ctx.createLinearGradient(0, 0, totalWidth, totalHeight);
+    bgGrad.addColorStop(0, "#050811");
+    bgGrad.addColorStop(0.2, "#0b1528");
+    bgGrad.addColorStop(0.5, "#0d2038");
+    bgGrad.addColorStop(0.8, "#091427");
+    bgGrad.addColorStop(1, "#050811");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+    // 2. Inner crisp neon accent line around the content
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.45)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(border, border, totalWidth - (border * 2), totalHeight - (border * 2));
+
+    // Outer subtle border
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.2)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(1, 1, totalWidth - 2, totalHeight - 2);
+
+    // 3. Scattered tiny watermark font: LumenLux with timestamp (e.g. 10 Oktober 2026@13:15:00)
+    const scatterText = `LumenLux • ${timestampStr}`;
+    ctx.font = "600 11px 'Outfit', 'Inter', system-ui, sans-serif";
+    ctx.fillStyle = "rgba(0, 242, 254, 0.42)";
+    ctx.textBaseline = "middle";
+
+    // Top margin row
+    const stepX = 340;
+    for (let x = border + 20; x < totalWidth - border; x += stepX) {
+        ctx.fillText(`✦ ${scatterText} ✦`, x, border / 2);
+    }
+
+    // Bottom margin row (leaves room on right for the official stamp)
+    const stopX = totalWidth - 260;
+    for (let x = border + 20; x < stopX; x += stepX) {
+        ctx.fillText(`✦ ${scatterText} ✦`, x, totalHeight - (border / 2));
+    }
+
+    // Left border (vertical text)
+    ctx.save();
+    ctx.translate(border / 2, border + 30);
+    ctx.rotate(Math.PI / 2);
+    for (let x = 0; x < totalHeight - (border * 2) - 60; x += stepX) {
+        ctx.fillText(`✦ ${scatterText} ✦`, x, 0);
+    }
+    ctx.restore();
+
+    // Right border (vertical text)
+    ctx.save();
+    ctx.translate(totalWidth - (border / 2), border + 30);
+    ctx.rotate(Math.PI / 2);
+    for (let x = 0; x < totalHeight - (border * 2) - 60; x += stepX) {
+        ctx.fillText(`✦ ${scatterText} ✦`, x, 0);
+    }
+    ctx.restore();
+}
+
+function drawMiddleDivider(ctx, x, y, width, height) {
+    // 1. Dark sleek glass background for divider
+    const divGrad = ctx.createLinearGradient(x, y, x + width, y + height);
+    divGrad.addColorStop(0, "#080e1c");
+    divGrad.addColorStop(0.5, "#101d36");
+    divGrad.addColorStop(1, "#080e1c");
+    ctx.fillStyle = divGrad;
+    ctx.fillRect(x, y, width, height);
+
+    // Subtle cyan borders
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y, width, height);
+
+    // 2. Draw user-specified middle format:
+    // ---------------⇑---------------
+    //                  Chamber
+    //                    Device
+    // ---------------⇓---------------
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const cx = x + width / 2;
+    const lineSpacing = height / 4;
+
+    // Line 1: ---------------⇑---------------
+    ctx.font = "700 13px 'Courier New', monospace";
+    ctx.fillStyle = "rgba(0, 242, 254, 0.75)";
+    ctx.fillText("---------------⇑---------------", cx, y + (lineSpacing * 0.75));
+
+    // Line 2: Chamber
+    ctx.font = "700 14px 'Outfit', 'Inter', sans-serif";
+    ctx.fillStyle = "#38bdf8";
+    ctx.fillText("Chamber", cx, y + (lineSpacing * 1.55));
+
+    // Line 3: Device
+    ctx.font = "700 14px 'Outfit', 'Inter', sans-serif";
+    ctx.fillStyle = "#c084fc";
+    ctx.fillText("Device", cx, y + (lineSpacing * 2.35));
+
+    // Line 4: ---------------⇓---------------
+    ctx.font = "700 13px 'Courier New', monospace";
+    ctx.fillStyle = "rgba(192, 132, 252, 0.75)";
+    ctx.fillText("---------------⇓---------------", cx, y + (lineSpacing * 3.15));
+
+    // Reset alignment
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
+}
+
+function drawLumenLuxTwibbonStamp(ctx, totalWidth, totalHeight, border) {
+    const badgeW = 200;
+    const badgeH = 38;
+    const badgeX = totalWidth - badgeW - 14;
+    const badgeY = totalHeight - badgeH - 6;
+
+    ctx.save();
+
+    // 1. Sleek Glass Badge Base
+    ctx.fillStyle = "rgba(9, 16, 32, 0.94)";
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.65)";
+    ctx.lineWidth = 1.5;
+
+    // Rounded rectangle
+    const radius = 8;
+    ctx.beginPath();
+    ctx.moveTo(badgeX + radius, badgeY);
+    ctx.lineTo(badgeX + badgeW - radius, badgeY);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY, badgeX + badgeW, badgeY + radius);
+    ctx.lineTo(badgeX + badgeW, badgeY + badgeH - radius);
+    ctx.quadraticCurveTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW - radius, badgeY + badgeH);
+    ctx.lineTo(badgeX + radius, badgeY + badgeH);
+    ctx.quadraticCurveTo(badgeX, badgeY + badgeH, badgeX, badgeY + badgeH - radius);
+    ctx.lineTo(badgeX, badgeY + radius);
+    ctx.quadraticCurveTo(badgeX, badgeY, badgeX + radius, badgeY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 2. Glowing Stamp Icon (Aperture / Camera Symbol)
+    const iconX = badgeX + 22;
+    const iconY = badgeY + badgeH / 2;
+
+    ctx.strokeStyle = "#00f2fe";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(iconX, iconY, 11, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = "#00f2fe";
+    ctx.beginPath();
+    ctx.arc(iconX, iconY, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. LumenLux Brand Typography
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "800 13px 'Outfit', sans-serif";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("LumenLux", badgeX + 44, badgeY + 18);
+
+    ctx.fillStyle = "#f59e0b";
+    ctx.font = "700 8px 'Inter', sans-serif";
+    ctx.letterSpacing = "1px";
+    ctx.fillText("OFFICIAL CAPTURE", badgeX + 44, badgeY + 30);
+
+    // 4. Certified Check Stamp Badge on the right
+    ctx.fillStyle = "rgba(16, 185, 129, 0.2)";
+    ctx.strokeStyle = "rgba(16, 185, 129, 0.8)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(badgeX + badgeW - 20, iconY, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#10b981";
+    ctx.font = "bold 9px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("✓", badgeX + badgeW - 20, iconY);
+
+    ctx.restore();
+}
+
+async function captureMultiCameraSnapshot() {
+    const isChamberActive = !!state.camera.enabled;
+    const isDeviceActive = !!(state.deviceCamera && state.deviceCamera.active && state.deviceCamera.stream);
+
+    if (!isChamberActive && !isDeviceActive) {
+        showToast("No active cameras to capture snapshot from");
+        return;
+    }
+
+    showToast("Compositing high-resolution multi-camera snapshot...");
+
+    try {
+        let imgChamber = null;
+        let imgDevice = null;
+
+        // 1. Grab Chamber image
+        if (isChamberActive) {
+            try {
+                const res = await fetch("/api/camera/snapshot");
+                if (res.ok) {
+                    const blob = await res.blob();
+                    imgChamber = await loadImageFromBlob(blob);
+                }
+            } catch (e) {
+                console.warn("API snapshot fetch failed, capturing from live stream element:", e);
+            }
+
+            if (!imgChamber) {
+                const streamImg = document.getElementById("cameraStream");
+                if (streamImg && streamImg.naturalWidth) {
+                    imgChamber = streamImg;
+                }
+            }
+        }
+
+        // 2. Grab Device frame
+        if (isDeviceActive) {
+            const video = document.getElementById("deviceCameraVideo");
+            if (video && video.videoWidth > 0) {
+                const offCanvas = document.createElement("canvas");
+                offCanvas.width = video.videoWidth;
+                offCanvas.height = video.videoHeight;
+                const offCtx = offCanvas.getContext("2d");
+                offCtx.drawImage(video, 0, 0, offCanvas.width, offCanvas.height);
+                imgDevice = offCanvas;
+            }
+        }
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        const border = 50; // 50px outside border on all sides
+        const timestampStr = formatIndonesianTimestamp();
+        const cleanTimestamp = timestampStr.replace(/[@:]/g, "-").replace(/\s+/g, "_");
+
+        if (imgChamber && imgDevice) {
+            // === DUAL MULTI-CAMERA VERTICAL STACK ===
+            const w1 = imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            const w2 = imgDevice.width;
+            const h2 = imgDevice.height;
+
+            // Proportional sizing: follow lowest resolution (lowest width)
+            const targetWidth = Math.min(w1, w2);
+            const targetH1 = Math.round(h1 * (targetWidth / w1));
+            const targetH2 = Math.round(h2 * (targetWidth / w2));
+            const dividerHeight = Math.max(60, Math.round(targetWidth * 0.04));
+
+            // Total canvas with 50px twibbon outside border (50px left right up down: +100px)
+            canvas.width = targetWidth + (border * 2);
+            canvas.height = targetH1 + dividerHeight + targetH2 + (border * 2);
+
+            // Draw Twibbon Gradient Background & Scattered Timestamp Watermark
+            drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
+
+            // Draw Chamber Image (Upper)
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(border, border, targetWidth, targetH1);
+            ctx.clip();
+            const cx = border + targetWidth / 2;
+            const cy = border + targetH1 / 2;
+            ctx.translate(cx, cy);
+            ctx.scale(state.camera.flip_h ? -1 : 1, state.camera.flip_v ? -1 : 1);
+            const z1 = state.camera.digital_zoom || 1.0;
+            ctx.scale(z1, z1);
+            ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
+            ctx.drawImage(imgChamber, -targetWidth / 2, -targetH1 / 2, targetWidth, targetH1);
+            ctx.restore();
+
+            // Draw Middle Divider
+            const divY = border + targetH1;
+            drawMiddleDivider(ctx, border, divY, targetWidth, dividerHeight);
+
+            // Draw Device Image (Bottom)
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(border, divY + dividerHeight, targetWidth, targetH2);
+            ctx.clip();
+            const dx = border + targetWidth / 2;
+            const dy = divY + dividerHeight + targetH2 / 2;
+            ctx.translate(dx, dy);
+            ctx.scale(state.deviceCamera.flip_h ? -1 : 1, state.deviceCamera.flip_v ? -1 : 1);
+            const z2 = state.deviceCamera.digital_zoom || 1.0;
+            ctx.scale(z2, z2);
+            ctx.filter = `brightness(${state.deviceCamera.filters.brightness}%) contrast(${state.deviceCamera.filters.contrast}%)`;
+            ctx.drawImage(imgDevice, -targetWidth / 2, -targetH2 / 2, targetWidth, targetH2);
+            ctx.restore();
+
+            // Draw Official LumenLux Stamp and Logo on right corner of twibbon
+            drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);
+
+            // Download Combined Picture
+            downloadCanvasImage(canvas, `LumenLux_MultiCam_${cleanTimestamp}.jpg`);
+            showToast(`Combined dual-snapshot downloaded (${canvas.width}x${canvas.height})!`);
+
+        } else if (imgChamber) {
+            // === SINGLE CHAMBER CAMERA WITH 50px TWIBBON ===
+            const w1 = imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            canvas.width = w1 + (border * 2);
+            canvas.height = h1 + (border * 2);
+
+            drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(border, border, w1, h1);
+            ctx.clip();
+            const cx = border + w1 / 2;
+            const cy = border + h1 / 2;
+            ctx.translate(cx, cy);
+            ctx.scale(state.camera.flip_h ? -1 : 1, state.camera.flip_v ? -1 : 1);
+            const z = state.camera.digital_zoom || 1.0;
+            ctx.scale(z, z);
+            ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
+            ctx.drawImage(imgChamber, -w1 / 2, -h1 / 2, w1, h1);
+            ctx.restore();
+
+            drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);
+            downloadCanvasImage(canvas, `LumenLux_Chamber_${cleanTimestamp}.jpg`);
+            showToast(`Chamber snapshot downloaded (${canvas.width}x${canvas.height})!`);
+
+        } else if (imgDevice) {
+            // === SINGLE DEVICE CAMERA WITH 50px TWIBBON ===
+            const w2 = imgDevice.width;
+            const h2 = imgDevice.height;
+            canvas.width = w2 + (border * 2);
+            canvas.height = h2 + (border * 2);
+
+            drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(border, border, w2, h2);
+            ctx.clip();
+            const dx = border + w2 / 2;
+            const dy = border + h2 / 2;
+            ctx.translate(dx, dy);
+            ctx.scale(state.deviceCamera.flip_h ? -1 : 1, state.deviceCamera.flip_v ? -1 : 1);
+            const z = state.deviceCamera.digital_zoom || 1.0;
+            ctx.scale(z, z);
+            ctx.filter = `brightness(${state.deviceCamera.filters.brightness}%) contrast(${state.deviceCamera.filters.contrast}%)`;
+            ctx.drawImage(imgDevice, -w2 / 2, -h2 / 2, w2, h2);
+            ctx.restore();
+
+            drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);
+            downloadCanvasImage(canvas, `LumenLux_Device_${cleanTimestamp}.jpg`);
+            showToast(`Device snapshot downloaded (${canvas.width}x${canvas.height})!`);
+        }
+    } catch (err) {
+        console.error("Multi-camera snapshot failed:", err);
+        showToast("Snapshot error: " + err.message);
+    }
+}
 
 // --- INITIALIZATION ---
 
@@ -1869,11 +2579,13 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Bind UI listeners
     setupLightListeners();
     setupCameraListeners();
+    setupDeviceCameraManager();
     setupOcrAuth();
     setupResetToDefaults();
     setupMobileLedDrawer();
     initFpsCounter();
     applyViewportTransforms();
+    updateSnapshotButtonState();
 
     // 4. Inactivity & Heartbeat tracking
     setupInactivityHeartbeat();

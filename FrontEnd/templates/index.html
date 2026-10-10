@@ -12,7 +12,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=3.7">
+    <link rel="stylesheet" href="/static/css/main.css?v=3.9">
 </head>
 
 <body>
@@ -109,6 +109,11 @@
                     Camera Studio
                 </h2>
                 <div class="header-actions">
+                    <label class="toggle-device-cam-label" title="Enable / Disable Local Device Camera (Webcam)">
+                        <input type="checkbox" id="chkEnableDeviceCam">
+                        <span class="device-cam-slider"></span>
+                        <span class="device-cam-text">Device Cam</span>
+                    </label>
                     <button class="btn-icon" id="btnRefreshCams" title="Scan for devices">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                             <path
@@ -119,9 +124,17 @@
                 </div>
             </div>
 
-            <!-- Viewport Screen -->
-            <div class="viewport-card" id="viewportCard">
-                <img id="cameraStream" class="viewport-stream" src="/stream" alt="Live Camera Stream">
+            <!-- Multi-Camera Stage (Single camera or Dual Chamber + Device Camera) -->
+            <div class="multi-camera-stage" id="multiCameraStage">
+                <!-- SLOT 1: Raspberry Pi Chamber Camera -->
+                <div class="camera-slot slot-chamber" id="slotChamber">
+                    <div class="slot-badge-header">
+                        <span class="slot-badge-title"><span class="dot-online"></span> Chamber (Raspberry Pi)</span>
+                    </div>
+
+                    <!-- Viewport Screen -->
+                    <div class="viewport-card" id="viewportCard">
+                        <img id="cameraStream" class="viewport-stream" src="/stream" alt="Live Camera Stream">
 
                 <!-- Viewport Top Badges & Mobile Settings Trigger -->
                 <div class="viewport-overlay-top">
@@ -454,63 +467,212 @@
                         </div>
                     </div>
                 </div>
-            </div>
+                    </div> <!-- /viewportCard -->
 
-            <!-- Quick Viewport Toolbar (Desktop flex row, Mobile 4x2 grid) -->
-            <div class="viewport-toolbar">
-                <button class="btn-icon danger" id="btnToggleCamera" title="Toggle camera capture">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
-                    </svg>
-                    <span>Enable Cam</span>
-                </button>
-                <button class="btn-icon disabled" id="btnSnapshot" disabled
+                    <!-- Chamber Dedicated Toolbar (6 Controls: Toggle, Settings, Fullscreen, Flip H, Flip V, Grid) -->
+                    <div class="slot-toolbar" id="chamberToolbar">
+                        <button class="btn-icon danger" id="btnToggleCamera" title="Toggle Raspberry camera capture">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+                            </svg>
+                            <span>Enable Cam</span>
+                        </button>
+                        <button class="btn-icon" id="btnToolbarSettings" title="Toggle Pro Camera Settings Overlay">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                            </svg>
+                            <span>Settings</span>
+                        </button>
+                        <button class="btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                            </svg>
+                            <span>Fullscreen</span>
+                        </button>
+                        <button class="btn-icon" id="btnFlipH" title="Flip Horizontal">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
+                            </svg>
+                            <span>Flip H</span>
+                        </button>
+                        <button class="btn-icon" id="btnFlipV" title="Flip Vertical">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm6 14.01V10h-2v7.01H10L15 21l4-3.99h-3z" />
+                            </svg>
+                            <span>Flip V</span>
+                        </button>
+                        <button class="btn-icon" id="btnToggleGrid" title="Toggle framing grid">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 20H4v-4h4v4zm0-6H4v-4h4v4zm0-6H4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4z" />
+                            </svg>
+                            <span>Grid</span>
+                        </button>
+                    </div>
+                </div> <!-- /slotChamber -->
+
+                <!-- SLOT 2: Local Device Camera (Webcam) -->
+                <div class="camera-slot slot-device hidden" id="slotDevice">
+                    <div class="slot-badge-header">
+                        <span class="slot-badge-title"><span class="dot-online device-dot"></span> Device Camera (Browser)</span>
+                    </div>
+
+                    <!-- Device Viewport Screen -->
+                    <div class="viewport-card" id="deviceViewportCard">
+                        <video id="deviceCameraVideo" class="viewport-stream" autoplay playsinline muted></video>
+
+                        <!-- Standby Overlay -->
+                        <div class="device-standby-overlay" id="deviceStandbyOverlay">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" opacity="0.6">
+                                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                            </svg>
+                            <span>Device Camera Starting...</span>
+                        </div>
+
+                        <!-- Device Viewport Top Badges -->
+                        <div class="viewport-overlay-top">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <div class="overlay-chip">
+                                    <span id="deviceCamBadge">Device Camera</span>
+                                </div>
+                                <div class="overlay-chip fps-counter">
+                                    <span id="deviceFpsBadge">30 FPS</span>
+                                </div>
+                            </div>
+                            <button class="overlay-btn-settings" id="btnToggleDeviceOverlay" type="button"
+                                title="Device Camera Settings">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path
+                                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                                </svg>
+                                <span>Device Settings</span>
+                            </button>
+                        </div>
+
+                        <!-- Rule of Thirds Framing Grid -->
+                        <div class="framing-grid" id="framingGridDevice">
+                            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+                        </div>
+
+                        <!-- Device Camera Pro Controls Overlay Drawer -->
+                        <div class="camera-settings-overlay" id="deviceSettingsOverlay">
+                            <div class="cam-overlay-header">
+                                <div class="cam-overlay-title">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                        <path
+                                            d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.63c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z" />
+                                    </svg>
+                                    <span>Device Camera Settings</span>
+                                </div>
+                                <button type="button" class="btn-overlay-close" id="btnCloseDeviceOverlay"
+                                    title="Close Settings">✕</button>
+                            </div>
+                            <div class="cam-overlay-body" style="padding: 16px;">
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceSourceSelect">Select Video Device</label>
+                                    <select id="deviceSourceSelect" class="select-custom">
+                                        <option value="default">Default Camera</option>
+                                    </select>
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceResSelect">Resolution Target</label>
+                                    <select id="deviceResSelect" class="select-custom">
+                                        <option value="1920x1080" selected>1920 x 1080 (Full HD 16:9)</option>
+                                        <option value="1280x720">1280 x 720 (HD 720p 16:9)</option>
+                                        <option value="640x480">640 x 480 (VGA 4:3)</option>
+                                    </select>
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceZoomSlider">
+                                        Digital Zoom
+                                        <span class="field-val-badge" id="deviceZoomBadge">1.0x</span>
+                                    </label>
+                                    <input type="range" id="deviceZoomSlider" class="slider-custom" min="1.0" max="3.0"
+                                        step="0.1" value="1.0">
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceBrightnessSlider">
+                                        Brightness
+                                        <span class="field-val-badge" id="deviceBrightnessBadge">100%</span>
+                                    </label>
+                                    <input type="range" id="deviceBrightnessSlider" class="slider-custom" min="50" max="200"
+                                        value="100">
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceContrastSlider">
+                                        Contrast
+                                        <span class="field-val-badge" id="deviceContrastBadge">100%</span>
+                                    </label>
+                                    <input type="range" id="deviceContrastSlider" class="slider-custom" min="50" max="200"
+                                        value="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div> <!-- /deviceViewportCard -->
+
+                    <!-- Device Dedicated Toolbar (6 Controls: Toggle, Settings, Fullscreen, Flip H, Flip V, Grid) -->
+                    <div class="slot-toolbar" id="deviceToolbar">
+                        <button class="btn-icon" id="btnToggleDeviceCamStream" title="Toggle device camera stream">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+                            </svg>
+                            <span>Disable Cam</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceSettings" title="Device Camera Settings">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                            </svg>
+                            <span>Settings</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceFullscreen" title="Toggle Fullscreen">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                            </svg>
+                            <span>Fullscreen</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceFlipH" title="Flip Horizontal">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
+                            </svg>
+                            <span>Flip H</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceFlipV" title="Flip Vertical">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm6 14.01V10h-2v7.01H10L15 21l4-3.99h-3z" />
+                            </svg>
+                            <span>Flip V</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceToggleGrid" title="Toggle framing grid">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 20H4v-4h4v4zm0-6H4v-4h4v4zm0-6H4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4z" />
+                            </svg>
+                            <span>Grid</span>
+                        </button>
+                    </div>
+                </div> <!-- /slotDevice -->
+            </div> <!-- /multiCameraStage -->
+
+            <!-- Unified Multi-Camera Master Action Bar -->
+            <div class="unified-action-toolbar" id="unifiedActionToolbar">
+                <button class="btn-action-master" id="btnSnapshot" disabled
                     title="Camera is disabled (enable camera to capture snapshot)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                         <path
                             d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
                     </svg>
-                    <span>Snapshot</span>
+                    <span id="lblSnapshotText">Capture Snapshot</span>
                 </button>
-                <button class="btn-icon" id="btnToolbarSettings" title="Toggle Pro Camera Settings Overlay">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
-                    </svg>
-                    <span>Settings</span>
-                </button>
-                <button class="btn-icon" id="btnFullscreen" title="Toggle Fullscreen">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
-                    </svg>
-                    <span>Fullscreen</span>
-                </button>
-                <button class="btn-icon" id="btnFlipH" title="Flip Horizontal">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
-                    </svg>
-                    <span>Flip H</span>
-                </button>
-                <button class="btn-icon" id="btnFlipV" title="Flip Vertical">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm6 14.01V10h-2v7.01H10L15 21l4-3.99h-3z" />
-                    </svg>
-                    <span>Flip V</span>
-                </button>
-                <button class="btn-icon" id="btnToggleGrid" title="Toggle framing grid">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 20H4v-4h4v4zm0-6H4v-4h4v4zm0-6H4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4z" />
-                    </svg>
-                    <span>Grid</span>
-                </button>
-                <button class="btn-icon" id="btnOcrCapture" title="OCR Text Recognition">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <button class="btn-action-master" id="btnOcrCapture" title="OCR Text Recognition">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                         <path
                             d="M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2zM7 11h10v2H7zm2-3h6v2H9zm-1 6h8v2H8z" />
                     </svg>
-                    <span>OCR</span>
+                    <span>OCR Studio</span>
                 </button>
             </div>
         </section>
@@ -857,7 +1019,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=3.7"></script>
+    <script src="/static/js/app.js?v=3.9"></script>
 </body>
 
 </html>

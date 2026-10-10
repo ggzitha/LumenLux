@@ -275,16 +275,27 @@ body {
         padding-bottom: 0.25rem;
     }
 
+    .multi-camera-stage {
+        flex: 1;
+        min-height: 0;
+        max-height: calc(100% - 48px);
+        overflow: hidden;
+    }
+
     .viewport-card {
         flex: 1;
         min-height: 0;
-        max-height: calc(100% - 65px);
+        max-height: 100%;
         aspect-ratio: auto !important;
         /* Scale naturally inside the container */
     }
 
-    .viewport-toolbar {
-        margin-top: 0.35rem !important;
+    .slot-toolbar {
+        margin-top: 0.25rem !important;
+    }
+
+    .unified-action-toolbar {
+        margin-top: 0.25rem !important;
     }
 
     .lights-panel {
@@ -802,15 +813,277 @@ body {
     border: 1px dashed rgba(255, 255, 255, 0.5);
 }
 
+/* Toggle Device Camera Header Switch */
+.toggle-device-cam-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    padding: 4px 10px 4px 6px;
+    transition: var(--transition);
+    user-select: none;
+}
+
+.toggle-device-cam-label:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(0, 242, 254, 0.35);
+}
+
+.toggle-device-cam-label input[type="checkbox"] {
+    display: none;
+}
+
+.device-cam-slider {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 20px;
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.device-cam-slider::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #ffffff;
+    border-radius: 50%;
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.toggle-device-cam-label input:checked + .device-cam-slider {
+    background: var(--neon-cyan);
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+}
+
+.toggle-device-cam-label input:checked + .device-cam-slider::after {
+    transform: translateX(12px);
+    background: #060911;
+}
+
+.device-cam-text {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: color 0.25s ease;
+}
+
+.toggle-device-cam-label input:checked ~ .device-cam-text {
+    color: var(--neon-cyan);
+    text-shadow: 0 0 8px rgba(0, 242, 254, 0.35);
+}
+
+/* Multi-Camera Stage Layout */
+.multi-camera-stage {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    gap: 8px;
+    transition: all 0.3s ease;
+}
+
+/* Desktop Dual Layout (Side-by-side: Chamber on Left, Device on Right) */
+@media (min-width: 861px) and (orientation: landscape) {
+    .multi-camera-stage.dual-active {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 12px !important;
+        align-items: stretch !important;
+    }
+}
+
+/* Mobile & Portrait Dual Layout (Vertical Stack: Chamber on Top, Device on Bottom) */
+@media (max-width: 860px), (orientation: portrait) {
+    .multi-camera-stage.dual-active {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 14px !important;
+    }
+}
+
+.camera-slot {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    position: relative;
+}
+
+.camera-slot.hidden {
+    display: none !important;
+}
+
+.slot-badge-header {
+    display: none;
+    margin-bottom: 4px;
+}
+
+.multi-camera-stage.dual-active .slot-badge-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.slot-badge-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.slot-badge-title .dot-online {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green);
+}
+
+.slot-badge-title .device-dot {
+    background: var(--neon-cyan);
+    box-shadow: 0 0 8px var(--neon-cyan);
+}
+
+/* Dedicated Slot Toolbars */
+.slot-toolbar,
 .viewport-toolbar {
     display: flex;
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    margin-top: 1rem;
+    gap: 6px;
+    margin-top: 0.5rem;
     flex-wrap: nowrap;
     width: 100%;
+}
+
+@media (max-width: 480px) {
+    .slot-toolbar,
+    .viewport-toolbar {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 5px !important;
+    }
+}
+
+.slot-toolbar .btn-icon,
+.viewport-toolbar .btn-icon {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 4px;
+    font-size: 0.74rem;
+}
+
+/* Device Standby / Starting Overlay */
+.device-standby-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 15, 26, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    z-index: 5;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.device-standby-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+/* Master Unified Action Bar (Snapshot & OCR) */
+.unified-action-toolbar {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 8px;
+    margin-top: 0.5rem;
+    width: 100%;
+}
+
+.btn-action-master {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 16px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: var(--transition);
+    user-select: none;
+}
+
+.btn-action-master:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.btn-action-master:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+#btnSnapshot.btn-action-master {
+    background: linear-gradient(135deg, rgba(0, 242, 254, 0.18), rgba(59, 130, 246, 0.18));
+    border-color: rgba(0, 242, 254, 0.4);
+    color: var(--neon-cyan);
+    box-shadow: 0 0 16px rgba(0, 242, 254, 0.15);
+}
+
+#btnSnapshot.btn-action-master:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(0, 242, 254, 0.3), rgba(59, 130, 246, 0.3));
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 24px rgba(0, 242, 254, 0.35);
+}
+
+#btnSnapshot.btn-action-master:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+#btnOcrCapture.btn-action-master {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(236, 72, 153, 0.18));
+    border-color: rgba(139, 92, 246, 0.35);
+    color: #c084fc;
+}
+
+#btnOcrCapture.btn-action-master:hover {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(236, 72, 153, 0.3));
+    border-color: #c084fc;
+    box-shadow: 0 0 20px rgba(192, 132, 252, 0.3);
+}
+
+#btnOcrCapture.btn-action-master.unlocked {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(0, 242, 254, 0.2));
+    border-color: var(--neon-green);
+    color: var(--neon-green);
+    box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
 }
 
 .btn-icon {
