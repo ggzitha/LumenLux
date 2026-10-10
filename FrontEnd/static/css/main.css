@@ -6,7 +6,7 @@
     --bg-card-hover: rgba(22, 32, 53, 0.82);
     --border-subtle: rgba(255, 255, 255, 0.08);
     --border-focus: rgba(0, 242, 254, 0.5);
-    
+
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
@@ -52,6 +52,7 @@ body {
     z-index: 0;
     opacity: 0.12;
 }
+
 .sphere-1 {
     width: 600px;
     height: 600px;
@@ -59,6 +60,7 @@ body {
     left: -150px;
     background: radial-gradient(circle, var(--neon-cyan), transparent);
 }
+
 .sphere-2 {
     width: 500px;
     height: 500px;
@@ -147,10 +149,12 @@ body {
     height: 8px;
     border-radius: 50%;
 }
+
 .pill-dot.online {
     background-color: var(--neon-green);
     box-shadow: 0 0 8px var(--neon-green);
 }
+
 .pill-dot.offline {
     background-color: var(--neon-red);
     box-shadow: 0 0 8px var(--neon-red);
@@ -167,6 +171,7 @@ body {
     font-size: 0.75rem;
     color: var(--text-secondary);
 }
+
 .metric-badge strong {
     color: var(--text-primary);
 }
@@ -185,12 +190,14 @@ body {
     cursor: pointer;
     transition: var(--transition);
 }
+
 .btn-reset-defaults:hover {
     background: rgba(245, 158, 11, 0.22);
     border-color: var(--neon-amber);
     box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
     transform: translateY(-1px);
 }
+
 .btn-reset-defaults:active {
     transform: translateY(0);
 }
@@ -206,6 +213,7 @@ body {
     font-weight: 600;
     transition: var(--transition);
 }
+
 .btn-logout:hover {
     background: rgba(239, 68, 68, 0.15);
     border-color: rgba(239, 68, 68, 0.3);
@@ -221,22 +229,28 @@ body {
     display: grid;
     grid-template-columns: 7fr 3fr;
     gap: 1.25rem;
-    align-items: stretch; /* Both sections have the exact same height on desktop */
+    align-items: stretch;
+    /* Both sections have the exact same height on desktop */
 }
 
 /* Desktop Panel Equal Height & Zero Scrollbar Sizing (100% Full-Page Zero-Scroll Layout) */
 @media (min-width: 861px) and (orientation: landscape) {
-    html, body {
+
+    html,
+    body {
         height: 100vh !important;
         max-height: 100vh !important;
-        overflow: hidden !important; /* Strictly no window or page scrollbars on desktop */
+        overflow: hidden !important;
+        /* Strictly no window or page scrollbars on desktop */
     }
+
     .app-header {
         height: 50px !important;
         min-height: 50px !important;
         max-height: 50px !important;
         padding: 0 1.25rem !important;
     }
+
     .dashboard-container {
         height: calc(100vh - 62px) !important;
         max-height: calc(100vh - 62px) !important;
@@ -246,6 +260,7 @@ body {
         overflow: hidden !important;
         align-items: stretch !important;
     }
+
     .camera-panel {
         display: flex;
         flex-direction: column;
@@ -254,106 +269,131 @@ body {
         overflow: hidden !important;
         padding: 0.75rem 1rem !important;
     }
+
     .camera-panel .panel-header {
         margin-bottom: 0.35rem;
         padding-bottom: 0.25rem;
     }
+
     .viewport-card {
         flex: 1;
         min-height: 0;
         max-height: calc(100% - 65px);
-        aspect-ratio: auto !important; /* Scale naturally inside the container */
+        aspect-ratio: auto !important;
+        /* Scale naturally inside the container */
     }
+
     .viewport-toolbar {
         margin-top: 0.35rem !important;
     }
+
     .lights-panel {
         display: flex;
         flex-direction: column;
-        overflow-y: hidden !important; /* Zero scrollbar on desktop: everything fits */
+        overflow-y: hidden !important;
+        /* Zero scrollbar on desktop: everything fits */
         overflow-x: hidden !important;
         height: 100% !important;
         max-height: 100% !important;
         padding: 0.75rem 1rem !important;
     }
+
     .lights-panel .panel-header {
         margin-bottom: 0.35rem;
         padding-bottom: 0.25rem;
     }
+
     .lights-panel .led-master-card {
         padding: 0.35rem 0.75rem;
         margin-bottom: 0.35rem;
     }
+
     .lights-panel .led-master-card h3 {
         font-size: 0.82rem !important;
     }
+
     .lights-panel .led-master-card p {
         font-size: 0.65rem !important;
     }
+
     .lights-panel .led-strip-preview-wrapper {
         margin: 0.35rem 0;
         padding: 0.35rem 0.65rem;
     }
+
     .lights-panel .led-strip-title {
         font-size: 0.66rem;
         margin-bottom: 0.25rem;
     }
+
     .lights-panel .virtual-led-strip {
         padding: 2px 0;
         gap: 3px;
         overflow: hidden;
     }
+
     .lights-panel .virtual-led-node {
         width: 8px;
         height: 8px;
     }
+
     .lights-panel .combined-color-card {
         padding: 4px 8px;
         margin-bottom: 0.35rem;
         gap: 2px;
     }
+
     .lights-panel .color-wheel-canvas-container {
         width: 105px;
         height: 105px;
         max-width: 105px;
         max-height: 105px;
     }
+
     .lights-panel #reinventedColorWheel {
         width: 105px;
         height: 105px;
         max-width: 105px;
         max-height: 105px;
     }
+
     .lights-panel .wheel-values-row {
         font-size: 0.66rem;
         padding-top: 2px;
     }
+
     .lights-panel .field-group {
         gap: 0.15rem;
         margin-bottom: 0.35rem !important;
     }
+
     .lights-panel .rgb-channels-grid {
         gap: 4px;
         margin-bottom: 0.35rem;
     }
+
     .lights-panel .rgb-box {
         padding: 3px 5px;
         gap: 2px;
     }
+
     .lights-panel .rgb-title {
         font-size: 0.65rem;
     }
+
     .lights-panel .rgb-input-number {
         font-size: 0.72rem;
         padding: 1px 3px;
         width: 36px;
     }
+
     .lights-panel .fx-controls-grid {
         display: grid;
         grid-template-columns: 1.35fr 1fr;
         gap: 8px;
         align-items: flex-end;
     }
+
     .lights-panel .select-custom {
         padding: 0.38rem 0.55rem;
         font-size: 0.75rem;
@@ -364,15 +404,19 @@ body {
 .mobile-header-actions {
     display: none;
 }
+
 .mobile-drawer-stats {
     display: none;
 }
+
 .btn-hamburger-led {
     display: none;
 }
+
 .btn-panel-close-mobile {
     display: none;
 }
+
 .mobile-drawer-backdrop {
     display: none;
 }
@@ -383,7 +427,10 @@ body {
    - Status badges cleanly placed inside LED drawer
    - Interactive Hamburger Button to slide LED drawer
    ========================================================================== */
-@media (max-width: 1024px), (orientation: portrait), (max-height: 540px) {
+@media (max-width: 1024px),
+(orientation: portrait),
+(max-height: 540px) {
+
     /* Clean Single-Line Mobile App Header */
     .app-header {
         position: sticky !important;
@@ -404,14 +451,17 @@ body {
     .desktop-stats {
         display: none !important;
     }
+
     .brand-subtext {
         display: none !important;
     }
+
     .brand-icon {
         width: 32px !important;
         height: 32px !important;
         flex-shrink: 0 !important;
     }
+
     .brand-text h1 {
         font-size: 1.05rem !important;
         white-space: nowrap !important;
@@ -424,6 +474,7 @@ body {
         gap: 8px !important;
         flex-shrink: 0 !important;
     }
+
     .mobile-status-pill {
         display: inline-flex !important;
         align-items: center;
@@ -455,8 +506,10 @@ body {
         height: 100vh !important;
         height: 100dvh !important;
         max-height: 100dvh !important;
-        z-index: 1200 !important; /* Above backdrop (1000) and header (100) */
-        background: #0b0f19 !important; /* Solid high-contrast dark background - ZERO blur */
+        z-index: 1200 !important;
+        /* Above backdrop (1000) and header (100) */
+        background: #0b0f19 !important;
+        /* Solid high-contrast dark background - ZERO blur */
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
         border-left: 1px solid rgba(16, 185, 129, 0.4) !important;
@@ -485,6 +538,7 @@ body {
         padding: 8px 10px;
         margin-bottom: 0.75rem;
     }
+
     .drawer-stat-item {
         display: flex;
         align-items: center;
@@ -492,10 +546,12 @@ body {
         font-size: 0.74rem;
         color: var(--text-secondary);
     }
+
     .drawer-stat-item strong {
         color: var(--text-primary);
         font-family: monospace;
     }
+
     .drawer-reset-btn {
         display: inline-flex;
         align-items: center;
@@ -510,10 +566,12 @@ body {
         cursor: pointer;
         transition: var(--transition);
     }
+
     .drawer-reset-btn:hover {
         background: rgba(245, 158, 11, 0.25);
         border-color: var(--neon-amber);
     }
+
     .drawer-logout-btn {
         display: inline-flex;
         align-items: center;
@@ -549,6 +607,7 @@ body {
         transition: var(--transition);
         box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
     }
+
     .btn-hamburger-led:active {
         background: rgba(16, 185, 129, 0.4);
         transform: scale(0.96);
@@ -560,6 +619,7 @@ body {
         gap: 3px;
         width: 14px;
     }
+
     .hamburger-bars span {
         display: block;
         height: 2px;
@@ -582,6 +642,7 @@ body {
         touch-action: manipulation;
         transition: var(--transition);
     }
+
     .btn-panel-close-mobile:hover,
     .btn-panel-close-mobile:active {
         background: rgba(239, 68, 68, 0.25);
@@ -597,11 +658,13 @@ body {
         background: rgba(0, 0, 0, 0.35) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
-        z-index: 1000 !important; /* Below lights-panel (1200) */
+        z-index: 1000 !important;
+        /* Below lights-panel (1200) */
         opacity: 0 !important;
         pointer-events: none !important;
         transition: opacity 0.25s ease !important;
     }
+
     .mobile-drawer-backdrop.active {
         opacity: 1 !important;
         pointer-events: auto !important;
@@ -613,18 +676,22 @@ body {
     .app-header {
         padding: 0.4rem 0.8rem;
     }
+
     .brand-icon {
         width: 30px;
         height: 30px;
     }
+
     .brand-text h1 {
         font-size: 1.05rem;
     }
+
     .dashboard-container {
         margin-top: 0.4rem;
         padding: 0 0.5rem;
         gap: 0.6rem;
     }
+
     .glass-panel {
         padding: 0.75rem;
     }
@@ -726,10 +793,12 @@ body {
     opacity: 0;
     transition: opacity 0.2s ease;
 }
+
 .framing-grid.active {
     opacity: 0.35;
 }
-.framing-grid > div {
+
+.framing-grid>div {
     border: 1px dashed rgba(255, 255, 255, 0.5);
 }
 
@@ -762,15 +831,18 @@ body {
     transition: var(--transition);
     white-space: nowrap;
 }
+
 .viewport-toolbar .btn-icon span {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
 .btn-icon:hover {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
 }
+
 .btn-icon:disabled,
 .btn-icon.disabled {
     opacity: 0.35 !important;
@@ -778,11 +850,13 @@ body {
     box-shadow: none !important;
     transform: none !important;
 }
+
 .btn-icon.active {
     background: rgba(0, 242, 254, 0.15);
     border-color: var(--neon-cyan);
     color: var(--neon-cyan);
 }
+
 .btn-icon.danger {
     background: rgba(239, 68, 68, 0.15);
     border-color: rgba(239, 68, 68, 0.4);
@@ -809,6 +883,7 @@ body {
     gap: 8px;
     align-items: flex-end;
 }
+
 @media (max-width: 600px) {
     .fx-controls-grid {
         grid-template-columns: 1fr;
@@ -820,6 +895,7 @@ body {
     flex-direction: column;
     gap: 0.4rem;
 }
+
 
 .field-label {
     font-size: 0.8rem;
@@ -836,7 +912,8 @@ body {
     font-weight: 600;
 }
 
-.select-custom, .input-custom {
+.select-custom,
+.input-custom {
     background: rgba(10, 15, 26, 0.85);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -846,7 +923,9 @@ body {
     outline: none;
     transition: var(--transition);
 }
-.select-custom:focus, .input-custom:focus {
+
+.select-custom:focus,
+.input-custom:focus {
     border-color: var(--neon-cyan);
     box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.15);
 }
@@ -857,6 +936,7 @@ input[type="number"]::-webkit-inner-spin-button {
     -webkit-appearance: none !important;
     margin: 0 !important;
 }
+
 input[type="number"] {
     -moz-appearance: textfield !important;
     appearance: textfield !important;
@@ -873,6 +953,7 @@ input[type="number"] {
     outline: none;
     margin: 6px 0;
 }
+
 .slider-custom::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -884,6 +965,7 @@ input[type="number"] {
     box-shadow: 0 0 10px var(--neon-cyan);
     transition: transform 0.1s ease;
 }
+
 .slider-custom::-webkit-slider-thumb:hover {
     transform: scale(1.15);
 }
@@ -906,11 +988,13 @@ input[type="number"] {
     width: 52px;
     height: 28px;
 }
+
 .switch-toggle input {
     opacity: 0;
     width: 0;
     height: 0;
 }
+
 .switch-slider {
     position: absolute;
     cursor: pointer;
@@ -919,6 +1003,7 @@ input[type="number"] {
     transition: .3s;
     border-radius: 34px;
 }
+
 .switch-slider:before {
     position: absolute;
     content: "";
@@ -930,11 +1015,13 @@ input[type="number"] {
     transition: .3s;
     border-radius: 50%;
 }
-input:checked + .switch-slider {
+
+input:checked+.switch-slider {
     background-color: var(--neon-green);
     box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
 }
-input:checked + .switch-slider:before {
+
+input:checked+.switch-slider:before {
     transform: translateX(24px);
 }
 
@@ -962,7 +1049,8 @@ input:checked + .switch-slider:before {
     justify-content: space-between;
     align-items: center;
     gap: 3px;
-    overflow: hidden; /* Strictly zero horizontal scrollbar */
+    overflow: hidden;
+    /* Strictly zero horizontal scrollbar */
     padding: 2px 0;
     width: 100%;
 }
@@ -1066,19 +1154,30 @@ input:checked + .switch-slider:before {
     flex-direction: column;
     gap: 3px;
 }
-.rgb-box.red-border { border-top: 3px solid var(--neon-red); }
-.rgb-box.green-border { border-top: 3px solid var(--neon-green); }
-.rgb-box.blue-border { border-top: 3px solid var(--neon-blue); }
+
+.rgb-box.red-border {
+    border-top: 3px solid var(--neon-red);
+}
+
+.rgb-box.green-border {
+    border-top: 3px solid var(--neon-green);
+}
+
+.rgb-box.blue-border {
+    border-top: 3px solid var(--neon-blue);
+}
 
 .rgb-box-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
+
 .rgb-title {
     font-size: 0.75rem;
     font-weight: 700;
 }
+
 .rgb-input-number {
     width: 54px;
     background: rgba(0, 0, 0, 0.4);
@@ -1112,9 +1211,11 @@ input:checked + .switch-slider:before {
     cursor: pointer;
     background: transparent;
 }
+
 .native-color-picker::-webkit-color-swatch-wrapper {
     padding: 0;
 }
+
 .native-color-picker::-webkit-color-swatch {
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
@@ -1145,6 +1246,7 @@ input:checked + .switch-slider:before {
     border-top: 1px solid var(--border-subtle);
     display: none;
 }
+
 .accordion-content.open {
     display: block;
 }
@@ -1174,9 +1276,17 @@ input:checked + .switch-slider:before {
     pointer-events: auto;
     animation: slideIn 0.3s ease;
 }
+
 @keyframes slideIn {
-    from { transform: translateX(50px); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+    from {
+        transform: translateX(50px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
 /* Master Power Toggle Button */
@@ -1194,12 +1304,14 @@ input:checked + .switch-slider:before {
     cursor: pointer;
     transition: var(--transition);
 }
+
 .btn-power-toggle.active {
     background: rgba(16, 185, 129, 0.18);
     border-color: rgba(16, 185, 129, 0.5);
     color: var(--neon-green);
     box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
 }
+
 .btn-power-toggle .power-dot {
     width: 8px;
     height: 8px;
@@ -1283,7 +1395,9 @@ input:checked + .switch-slider:before {
 }
 
 @media (max-width: 600px) {
-    .props-table-header, .props-row {
+
+    .props-table-header,
+    .props-row {
         grid-template-columns: 105px 1fr 50px 40px;
         gap: 6px;
     }
@@ -1309,6 +1423,7 @@ input:checked + .switch-slider:before {
     font-size: 0.8rem;
     font-weight: 600;
 }
+
 .props-num-input:focus {
     border-color: var(--neon-cyan);
     outline: none;
@@ -1349,6 +1464,7 @@ input:checked + .switch-slider:before {
     cursor: pointer;
     transition: var(--transition);
 }
+
 .btn-default-reset:hover {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.25);
@@ -1414,13 +1530,15 @@ input:checked + .switch-slider:before {
 }
 
 /* Mobile & Portrait Screens: Right-Side Drawer (Wider for Sliders, Smaller Badges, 4x2 Toolbar Grid) */
-@media (max-width: 1024px), (orientation: portrait) {
+@media (max-width: 1024px),
+(orientation: portrait) {
     .camera-settings-overlay {
         top: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
         left: auto !important;
-        width: 86% !important; /* Wider on mobile so zoom, pan, tilt sliders fit comfortably */
+        width: 86% !important;
+        /* Wider on mobile so zoom, pan, tilt sliders fit comfortably */
         min-width: 280px !important;
         max-width: 380px !important;
         height: 100% !important;
@@ -1432,6 +1550,7 @@ input:checked + .switch-slider:before {
         backdrop-filter: blur(4px) !important;
         -webkit-backdrop-filter: blur(4px) !important;
     }
+
     .camera-settings-overlay.open {
         transform: translateX(0) !important;
         opacity: 1 !important;
@@ -1445,28 +1564,33 @@ input:checked + .switch-slider:before {
         right: 6px !important;
         gap: 4px !important;
     }
+
     .overlay-chip {
         padding: 2px 6px !important;
         font-size: 0.65rem !important;
         border-radius: 10px !important;
         gap: 4px !important;
     }
+
     .overlay-chip.stream-badge {
         max-width: 120px !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
     }
+
     .overlay-chip.fps-counter {
         padding: 2px 5px !important;
         font-size: 0.65rem !important;
     }
+
     .overlay-btn-settings {
         padding: 2px 7px !important;
         font-size: 0.65rem !important;
         gap: 3px !important;
         border-radius: 10px !important;
     }
+
     .overlay-btn-settings svg {
         width: 11px !important;
         height: 11px !important;
@@ -1481,6 +1605,7 @@ input:checked + .switch-slider:before {
         margin-top: 0.6rem !important;
         width: 100% !important;
     }
+
     .viewport-toolbar .btn-icon {
         display: flex !important;
         flex-direction: column !important;
@@ -1496,11 +1621,13 @@ input:checked + .switch-slider:before {
         box-sizing: border-box !important;
         border-radius: var(--radius-sm) !important;
     }
+
     .viewport-toolbar .btn-icon svg {
         width: 14px !important;
         height: 14px !important;
         flex-shrink: 0 !important;
     }
+
     .viewport-toolbar .btn-icon span {
         white-space: nowrap !important;
         overflow: hidden !important;
@@ -1565,9 +1692,11 @@ input:checked + .switch-slider:before {
 .cam-overlay-body::-webkit-scrollbar {
     width: 6px;
 }
+
 .cam-overlay-body::-webkit-scrollbar-track {
     background: rgba(0, 0, 0, 0.2);
 }
+
 .cam-overlay-body::-webkit-scrollbar-thumb {
     background: rgba(0, 242, 254, 0.25);
     border-radius: 4px;
@@ -1700,23 +1829,27 @@ input:checked + .switch-slider:before {
     padding: 8px 10px;
     gap: 8px;
 }
+
 .camera-settings-overlay .overlay-quick-config {
-    grid-template-columns: 1fr 1fr;
     gap: 6px;
     padding: 6px 8px;
     background: rgba(10, 15, 26, 0.45);
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .camera-settings-overlay .overlay-quick-config .field-group {
     gap: 2px;
 }
+
 .camera-settings-overlay .overlay-quick-config .field-label {
     font-size: 0.68rem;
 }
+
 .camera-settings-overlay .overlay-quick-config .select-custom {
     padding: 4px 6px;
     font-size: 0.72rem;
 }
+
 .camera-settings-overlay .props-tab-bar {
     display: flex;
     background: rgba(10, 15, 26, 0.45);
@@ -1726,6 +1859,7 @@ input:checked + .switch-slider:before {
     border-radius: var(--radius-sm);
     flex-shrink: 0;
 }
+
 .camera-settings-overlay .props-tab-btn {
     flex: 1;
     padding: 5px 4px;
@@ -1733,21 +1867,25 @@ input:checked + .switch-slider:before {
     white-space: nowrap;
     text-align: center;
 }
+
 .camera-settings-overlay .props-tab-content {
     padding: 6px 2px;
 }
+
 .camera-settings-overlay .props-table-header,
 .camera-settings-overlay .props-row {
     grid-template-columns: 62px 1fr 40px 24px;
     gap: 5px;
     align-items: center;
 }
+
 .camera-settings-overlay .props-label {
     font-size: 0.72rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
 .camera-settings-overlay .props-num-input {
     font-size: 0.7rem;
     padding: 2px 2px;
@@ -1755,6 +1893,7 @@ input:checked + .switch-slider:before {
     text-align: center;
     border-radius: 4px;
 }
+
 .camera-settings-overlay .slider-custom {
     display: block !important;
     width: 100% !important;
@@ -1765,6 +1904,7 @@ input:checked + .switch-slider:before {
     -webkit-appearance: none !important;
     appearance: none !important;
 }
+
 .camera-settings-overlay .slider-custom::-webkit-slider-thumb {
     width: 16px !important;
     height: 16px !important;
@@ -1772,16 +1912,19 @@ input:checked + .switch-slider:before {
     background: var(--neon-cyan) !important;
     box-shadow: 0 0 8px var(--neon-cyan) !important;
 }
+
 .camera-settings-overlay .props-table-header {
     background: rgba(10, 15, 26, 0.55);
     border-radius: 4px;
     padding: 3px 6px;
 }
+
 .camera-settings-overlay .props-row {
     background: rgba(10, 15, 26, 0.35);
     border-radius: 6px;
     padding: 3px 6px;
 }
+
 .camera-settings-overlay .props-footer {
     background: rgba(10, 15, 26, 0.4);
     padding: 6px 8px;
@@ -2041,13 +2184,27 @@ input:checked + .switch-slider:before {
 }
 
 @keyframes ocrSpin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 @keyframes ocrShake {
-    0%, 100% { transform: translateX(0); }
-    20%, 60% { transform: translateX(-8px); }
-    40%, 80% { transform: translateX(8px); }
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    20%,
+    60% {
+        transform: translateX(-8px);
+    }
+
+    40%,
+    80% {
+        transform: translateX(8px);
+    }
 }
 
 .ocr-shake {
@@ -2061,6 +2218,3 @@ input:checked + .switch-slider:before {
     background: rgba(16, 185, 129, 0.12) !important;
     box-shadow: 0 0 12px rgba(16, 185, 129, 0.25) !important;
 }
-
-
-

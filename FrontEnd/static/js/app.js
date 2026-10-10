@@ -22,7 +22,7 @@ const envDefaults = window.APP_DEFAULTS || {
 const state = {
     // Light state (Initialized with .env defaults)
     lights: {
-        power: true,
+        power: false,
         color: {
             r: envDefaults.led_color_rgb?.[0] ?? 255,
             g: envDefaults.led_color_rgb?.[1] ?? 255,
@@ -38,7 +38,7 @@ const state = {
     },
     // Camera state (Initialized with .env defaults)
     camera: {
-        enabled: true,
+        enabled: false,
         active_id: null,
         resolution: envDefaults.default_resolution ?? "1920x1080",
         target_fps: 30,
@@ -68,8 +68,16 @@ function loadSavedConfig() {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             const parsed = JSON.parse(saved);
-            if (parsed.lights) Object.assign(state.lights, parsed.lights);
-            if (parsed.camera) Object.assign(state.camera, parsed.camera);
+            if (parsed.lights) {
+                // Strip saved power: always boot in safe OFF state until user turns on manually
+                delete parsed.lights.power;
+                Object.assign(state.lights, parsed.lights);
+            }
+            if (parsed.camera) {
+                // Strip saved enabled: always boot with camera disabled until user turns on manually
+                delete parsed.camera.enabled;
+                Object.assign(state.camera, parsed.camera);
+            }
             console.log("[Storage] User configuration loaded from browser storage:", parsed);
         } else {
             console.log("[Config] Initialized with .env defaults:", envDefaults);
@@ -515,7 +523,7 @@ function initColorWheel() {
     colorWheelInstance.setRgb(state.lights.color.r, state.lights.color.g, state.lights.color.b, false);
 }
 
-function syncRgbInputs(r, g, b, fromWheel = false) {
+function syncRgbInputs(r, g, b, fromWheel = false, sendBackend = true) {
     state.lights.color.r = r;
     state.lights.color.g = g;
     state.lights.color.b = b;
@@ -566,7 +574,9 @@ function syncRgbInputs(r, g, b, fromWheel = false) {
     else if (r === 0 && g === 255 && b === 0) document.getElementById("presetGreen")?.classList.add("active");
     else if (r === 0 && g === 0 && b === 255) document.getElementById("presetBlue")?.classList.add("active");
 
-    sendLightUpdate(false);
+    if (sendBackend && state.lights.power) {
+        sendLightUpdate(false);
+    }
 }
 
 function setMasterPower(on) {
@@ -1878,7 +1888,7 @@ document.addEventListener("DOMContentLoaded", () => {
     pollSystemStatus();
     setInterval(pollSystemStatus, 6000);
 
-    // Initial sync of RGB
-    syncRgbInputs(state.lights.color.r, state.lights.color.g, state.lights.color.b);
+    // Initial sync of RGB UI (do not send to backend on boot)
+    syncRgbInputs(state.lights.color.r, state.lights.color.g, state.lights.color.b, false, false);
 });
 

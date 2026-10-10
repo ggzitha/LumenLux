@@ -27,10 +27,10 @@ class LEDManager:
         self.pixels = None
         self.is_hardware = False
         
-        # State: default power ON, white color, 1.0 brightness, static effect
-        self.power = True
+        # State: default power OFF, white color, 0.45 brightness, static effect
+        self.power = False
         self.color = (255, 255, 255)
-        self.brightness = 1.0
+        self.brightness = 0.45
         self.effect = "static"
         self.speed = 50  # milliseconds per frame (15 - 500)
         
@@ -53,12 +53,14 @@ class LEDManager:
             self.pixels = neopixel.NeoPixel(
                 pin_obj,
                 self.count,
-                brightness=self.brightness,
+                brightness=0.0,
                 auto_write=False,
                 pixel_order=neopixel.GRB
             )
+            self.pixels.fill((0, 0, 0))
+            self.pixels.show()
             self.is_hardware = True
-            logger.info("Hardware NeoPixel initialized on GPIO%d with %d LEDs", self.pin_num, self.count)
+            logger.info("Hardware NeoPixel initialized on GPIO%d with %d LEDs (all OFF)", self.pin_num, self.count)
         except Exception as e:
             self.is_hardware = False
             self.pixels = None

@@ -215,6 +215,13 @@ async def startup_event():
     record_activity()
     watchdog_task = asyncio.create_task(inactivity_watchdog_loop())
 
+    # Ensure hardware starts completely OFF on boot until user manually turns on
+    try:
+        await backend_client.post("/api/lights", json={"power": False}, timeout=3.0)
+        await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=3.0)
+    except Exception:
+        pass
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -49,14 +49,14 @@ class CameraManager:
         self.lock = threading.Lock()
         self.ctrl_lock = threading.Lock()
         self.active_camera_id = None
-        self.camera_enabled = True
+        self.camera_enabled = False
         
         # Stream settings
         self.target_fps = 30
         self.resolution = (640, 480)
         
         # State tracking
-        self.last_frame = None
+        self.last_frame = self._generate_synthetic_frame("Camera Disabled / Sleep")
         self.last_frame_time = 0
         self.client_count = 0
         self.running = True
