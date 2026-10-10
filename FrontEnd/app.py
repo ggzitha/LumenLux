@@ -248,6 +248,13 @@ async def inactivity_watchdog_loop():
             await asyncio.sleep(5)
             idle = time.time() - last_activity_time
 
+            # Periodically ping backend watchdog if system is active
+            if backend_client and not inactivity_shut_off:
+                try:
+                    await backend_client.post("/api/heartbeat", timeout=2.0)
+                except Exception:
+                    pass
+
             # Stage 1: Turn off WS2812B lights after 2 minutes of idle (Camera remains ON)
             if idle >= LED_AUTO_OFF and not led_auto_off_done:
                 logger.info(
@@ -311,6 +318,12 @@ async def shutdown_event():
     if watchdog_task:
         watchdog_task.cancel()
     if backend_client:
+        try:
+            logger.info("Server shutting down: sending immediate power-off to Raspberry Pi hardware...")
+            await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=1.5)
+            await backend_client.post("/api/lights", json={"power": False}, timeout=1.5)
+        except Exception as e:
+            logger.debug("Shutdown hardware request failed: %s", e)
         await backend_client.aclose()
 
 
@@ -467,6 +480,11 @@ async def verify_ocr_password(payload: dict, user: str = Depends(require_auth)):
 async def user_heartbeat(user: str = Depends(require_auth)):
     """Keep-alive ping from active browser."""
     record_activity()
+    if backend_client and not inactivity_shut_off:
+        try:
+            await backend_client.post("/api/heartbeat", timeout=2.0)
+        except Exception:
+            pass
     idle = time.time() - last_activity_time
     return {
         "status": "ok",

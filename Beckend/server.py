@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -53,6 +54,17 @@ logger = logging.getLogger("server")
 # Global instances
 led_mgr = None
 cam_mgr = None
+
+# Hardware Watchdog & Client Activity Tracking
+# If hardware is running but no client requests / heartbeats are received for CLIENT_WATCHDOG_TIMEOUT seconds,
+# the backend assumes Frontend Docker / Python has terminated or disconnected, and turns off camera and LEDs.
+CLIENT_WATCHDOG_TIMEOUT = float(os.environ.get("CLIENT_WATCHDOG_TIMEOUT", 15.0))  # seconds
+last_client_activity = time.time()
+watchdog_running = True
+
+def touch_client_activity():
+    global last_client_activity
+    last_client_activity = time.time()
 
 def get_system_stats() -> dict:
     """Retrieve lightweight Raspberry Pi system metrics."""
@@ -156,14 +168,19 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._check_ip_allowed():
             return
+        touch_client_activity()
 
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         if not path:
             path = "/"
 
+        # 0. Heartbeat keepalive
+        if path == "/api/heartbeat":
+            self._send_json({"status": "ok", "timestamp": time.time()})
+
         # 1. System & Full Status
-        if path == "/api/status" or path == "/":
+        elif path == "/api/status" or path == "/":
             response = {
                 "status": "ok",
                 "system": get_system_stats(),
@@ -202,6 +219,7 @@ class APIHandler(BaseHTTPRequestHandler):
 
             try:
                 for chunk in cam_mgr.generate_mjpeg_stream():
+                    touch_client_activity()
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
@@ -220,13 +238,18 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._check_ip_allowed():
             return
+        touch_client_activity()
 
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         data = self._read_json_body()
 
+        # 0. Heartbeat keepalive
+        if path == "/api/heartbeat":
+            self._send_json({"status": "ok", "timestamp": time.time()})
+
         # 1. Lights control
-        if path == "/api/lights":
+        elif path == "/api/lights":
             color = data.get("color")
             if isinstance(color, list) and len(color) >= 3:
                 color_tuple = (color[0], color[1], color[2])
@@ -278,13 +301,13 @@ class APIHandler(BaseHTTPRequestHandler):
         # Suppress spammy per-frame HTTP logs to avoid saturating Pi log buffers
         if args and len(args) > 0:
             first_arg = str(args[0])
-            if "/api/camera/stream" in first_arg or "/api/status" in first_arg:
+            if "/api/camera/stream" in first_arg or "/api/status" in first_arg or "/api/heartbeat" in first_arg:
                 return
         logger.info("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
 
 
 def main():
-    global led_mgr, cam_mgr
+    global led_mgr, cam_mgr, watchdog_running
 
     parser = argparse.ArgumentParser(description="Lumen-Zero Pi Backend Server")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 5000)), help="Port (default: 5000)")
@@ -299,8 +322,45 @@ def main():
     logger.info("Initializing Camera Manager...")
     cam_mgr = CameraManager()
 
+    def watchdog_worker():
+        global watchdog_running
+        logger.info(
+            "Hardware Watchdog active (Timeout: %.1fs). "
+            "Pi will auto-power down camera and LEDs if Frontend stops or disconnects.",
+            CLIENT_WATCHDOG_TIMEOUT
+        )
+        while watchdog_running:
+            time.sleep(2.0)
+            try:
+                cam_on = bool(cam_mgr and getattr(cam_mgr, "camera_enabled", False))
+                led_on = False
+                if led_mgr:
+                    st = led_mgr.get_state()
+                    led_on = bool(st.get("power", False))
+
+                # Only evaluate timeout if hardware is actively ON
+                if cam_on or led_on:
+                    idle = time.time() - last_client_activity
+                    if idle >= CLIENT_WATCHDOG_TIMEOUT:
+                        logger.warning(
+                            "[WATCHDOG AUTO-OFF] No active client connection for %.1fs (limit: %.1fs). "
+                            "Frontend Docker/Python appears stopped. Auto-powering down camera and LEDs...",
+                            idle, CLIENT_WATCHDOG_TIMEOUT
+                        )
+                        if cam_on and cam_mgr:
+                            cam_mgr.set_enabled(False)
+                        if led_on and led_mgr:
+                            led_mgr.set_state(power=False)
+            except Exception as e:
+                logger.error("Watchdog worker exception: %s", e)
+
+    watchdog_thread = threading.Thread(target=watchdog_worker, name="ClientWatchdog", daemon=True)
+    watchdog_thread.start()
+
     def handle_signal(sig, frame):
+        global watchdog_running
         logger.info("Termination signal received. Shutting down gracefully...")
+        watchdog_running = False
         try:
             if led_mgr:
                 led_mgr.cleanup()
@@ -323,6 +383,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        watchdog_running = False
         if led_mgr:
             led_mgr.cleanup()
         if cam_mgr:

@@ -1984,37 +1984,106 @@ async function enumerateDeviceCameras() {
     }
 }
 
-async function startDeviceCameraStream() {
+let isDeviceCamStarting = false;
+
+async function startDeviceCameraStream(preserveStateOnError = false) {
+    if (isDeviceCamStarting) return;
+    isDeviceCamStarting = true;
+
     const stage = document.getElementById("multiCameraStage");
     const slotDevice = document.getElementById("slotDevice");
     const video = document.getElementById("deviceCameraVideo");
     const standby = document.getElementById("deviceStandbyOverlay");
     const chk = document.getElementById("chkEnableDeviceCam");
 
+    // 1. Fully release previous stream & tracks so mobile OS camera HAL unbinds hardware
+    if (state.deviceCamera.stream) {
+        try {
+            state.deviceCamera.stream.getTracks().forEach(track => {
+                try { track.stop(); } catch (_) { }
+            });
+        } catch (_) { }
+        state.deviceCamera.stream = null;
+    }
+    if (video) {
+        video.srcObject = null;
+    }
+
+    // 2. Allow mobile OS camera driver 100ms to cleanly release sensor mutex
+    await new Promise(r => setTimeout(r, 100));
+
     try {
-        showToast("Requesting browser device camera access...");
+        showToast("Accessing device camera...");
         const [reqW, reqH] = (state.deviceCamera.resolution || "1920x1080").split("x").map(Number);
-        const constraints = {
-            video: {
-                width: { ideal: reqW || 1920 },
-                height: { ideal: reqH || 1080 }
-            },
-            audio: false
+        const targetDeviceId = state.deviceCamera.deviceId;
+
+        const baseVideoConstraints = {
+            width: { ideal: reqW || 1920 },
+            height: { ideal: reqH || 1080 }
         };
-        if (state.deviceCamera.deviceId && state.deviceCamera.deviceId !== "default") {
-            constraints.video.deviceId = { exact: state.deviceCamera.deviceId };
+
+        let stream = null;
+        let lastError = null;
+
+        // Attempt 1: Exact targetDeviceId
+        if (targetDeviceId && targetDeviceId !== "default") {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { ...baseVideoConstraints, deviceId: { exact: targetDeviceId } },
+                    audio: false
+                });
+            } catch (err1) {
+                console.warn("[DeviceCam] Exact deviceId request failed, trying ideal deviceId:", err1);
+                lastError = err1;
+                await new Promise(r => setTimeout(r, 120));
+            }
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        // Attempt 2: Ideal targetDeviceId (gracefully relaxes overconstrained attributes on Android/iOS)
+        if (!stream && targetDeviceId && targetDeviceId !== "default") {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { ...baseVideoConstraints, deviceId: { ideal: targetDeviceId } },
+                    audio: false
+                });
+            } catch (err2) {
+                console.warn("[DeviceCam] Ideal deviceId request failed, trying fallback:", err2);
+                lastError = err2;
+                await new Promise(r => setTimeout(r, 120));
+            }
+        }
+
+        // Attempt 3: General video input fallback if specific sensor constraint threw
+        if (!stream) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: baseVideoConstraints,
+                    audio: false
+                });
+            } catch (err3) {
+                throw lastError || err3;
+            }
+        }
+
         state.deviceCamera.stream = stream;
         state.deviceCamera.enabled = true;
         state.deviceCamera.active = true;
+
+        // Synchronize active deviceId from opened track settings
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
+            if (settings.deviceId) {
+                state.deviceCamera.deviceId = settings.deviceId;
+            }
+        }
 
         if (video) {
             video.srcObject = stream;
             await video.play().catch(() => { });
         }
 
+        if (chk) chk.checked = true;
         if (slotDevice) slotDevice.classList.remove("hidden");
         if (stage) stage.classList.add("dual-active");
         if (standby) standby.classList.add("hidden");
@@ -2033,13 +2102,18 @@ async function startDeviceCameraStream() {
         showToast("Device camera activated successfully!");
     } catch (err) {
         console.error("Device camera access error:", err);
-        state.deviceCamera.enabled = false;
-        state.deviceCamera.active = false;
-        if (chk) chk.checked = false;
-        if (slotDevice) slotDevice.classList.add("hidden");
-        if (stage) stage.classList.remove("dual-active");
-        updateSnapshotButtonState();
-        showToast("Camera access rejected or unavailable: " + err.message);
+        if (!preserveStateOnError) {
+            state.deviceCamera.enabled = false;
+            state.deviceCamera.active = false;
+            if (chk) chk.checked = false;
+            if (slotDevice) slotDevice.classList.add("hidden");
+            if (stage) stage.classList.remove("dual-active");
+            if (standby) standby.classList.remove("hidden");
+            updateSnapshotButtonState();
+        }
+        showToast("Camera access rejected or unavailable: " + (err.name || err.message));
+    } finally {
+        isDeviceCamStarting = false;
     }
 }
 
@@ -2237,11 +2311,15 @@ function setupDeviceCameraManager() {
 
     // Settings Inputs
     const sourceSelect = document.getElementById("deviceSourceSelect");
-    sourceSelect?.addEventListener("change", (e) => {
+    sourceSelect?.addEventListener("change", async (e) => {
         state.deviceCamera.deviceId = e.target.value;
+        const badge = document.getElementById("deviceCamBadge");
+        if (badge && sourceSelect.options[sourceSelect.selectedIndex]) {
+            badge.textContent = sourceSelect.options[sourceSelect.selectedIndex].text;
+        }
         saveConfig();
         if (state.deviceCamera.enabled) {
-            startDeviceCameraStream();
+            await startDeviceCameraStream(true);
         }
     });
 
@@ -2249,11 +2327,11 @@ function setupDeviceCameraManager() {
     if (resSelect && state.deviceCamera.resolution) {
         resSelect.value = state.deviceCamera.resolution;
     }
-    resSelect?.addEventListener("change", (e) => {
+    resSelect?.addEventListener("change", async (e) => {
         state.deviceCamera.resolution = e.target.value;
         saveConfig();
         if (state.deviceCamera.enabled) {
-            startDeviceCameraStream();
+            await startDeviceCameraStream(true);
         }
     });
 

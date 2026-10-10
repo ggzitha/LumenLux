@@ -5,7 +5,14 @@ import uvicorn
 if __name__ == "__main__":
     try:
         print("[run_server] Starting Uvicorn...", flush=True)
-        uvicorn.run("app:app", host="0.0.0.0", port=8080, log_level="info", access_log=True)
+        uvicorn.run(
+            "app:app",
+            host="0.0.0.0",
+            port=8080,
+            log_level="info",
+            access_log=True,
+            timeout_graceful_shutdown=0
+        )
     except Exception as e:
         with open("server_crash.log", "a", encoding="utf-8") as f:
             f.write(f"Server crashed with: {e}\n")
