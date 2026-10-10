@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Akses Aplikasi Ditolak — LumenLux-Zero</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #070a12;
+            --bg-card: rgba(17, 24, 39, 0.82);
+            --border-danger: rgba(239, 68, 68, 0.4);
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --neon-red: #ef4444;
+            --neon-amber: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Ambient Glow Spheres */
+        .ambient-glow {
+            position: absolute;
+            width: 520px;
+            height: 520px;
+            border-radius: 50%;
+            filter: blur(140px);
+            opacity: 0.16;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .glow-red {
+            top: -120px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: radial-gradient(circle, var(--neon-red), transparent);
+        }
+        .glow-amber {
+            bottom: -150px;
+            right: 15%;
+            background: radial-gradient(circle, var(--neon-amber), transparent);
+        }
+
+        /* Glassmorphism Card */
+        .blocked-card {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 480px;
+            background: var(--bg-card);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--border-danger);
+            box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.85), 0 0 35px -5px rgba(239, 68, 68, 0.25);
+            border-radius: 24px;
+            padding: 2.75rem 2.25rem 2.25rem;
+            text-align: center;
+            animation: cardAppear 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes cardAppear {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        /* Icon Badge */
+        .icon-container {
+            width: 76px;
+            height: 76px;
+            margin: 0 auto 1.5rem;
+            border-radius: 22px;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(185, 28, 28, 0.1));
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--neon-red);
+            box-shadow: 0 0 24px rgba(239, 68, 68, 0.35);
+            animation: pulseGlow 2.5s infinite ease-in-out;
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% {
+                box-shadow: 0 0 24px rgba(239, 68, 68, 0.35);
+                transform: scale(1);
+            }
+            50% {
+                box-shadow: 0 0 36px rgba(239, 68, 68, 0.55);
+                transform: scale(1.03);
+            }
+        }
+
+        .icon-container svg {
+            width: 40px;
+            height: 40px;
+        }
+
+        /* Headings */
+        .blocked-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 0.85rem;
+            letter-spacing: -0.02em;
+        }
+
+        .blocked-subtitle {
+            font-size: 0.95rem;
+            color: #cbd5e1;
+            line-height: 1.55;
+            margin-bottom: 1.75rem;
+            font-weight: 400;
+        }
+
+        /* Detected IP Box */
+        .ip-badge-box {
+            background: rgba(10, 15, 26, 0.75);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            border-radius: 14px;
+            padding: 0.95rem 1.25rem;
+            margin-bottom: 1.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        .ip-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .ip-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--neon-red);
+            letter-spacing: 0.03em;
+            background: rgba(239, 68, 68, 0.12);
+            padding: 3px 8px;
+            border-radius: 6px;
+        }
+
+        /* Footer */
+        .blocked-footer {
+            padding-top: 1.4rem;
+            border-top: 1px solid var(--border-subtle);
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            line-height: 1.45;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .footer-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: var(--neon-amber);
+            box-shadow: 0 0 6px var(--neon-amber);
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 480px) {
+            .blocked-card {
+                padding: 2.25rem 1.5rem 1.75rem;
+                border-radius: 20px;
+            }
+            .blocked-title {
+                font-size: 1.45rem;
+            }
+            .blocked-subtitle {
+                font-size: 0.88rem;
+            }
+            .ip-badge-box {
+                flex-direction: column;
+                gap: 4px;
+                padding: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="ambient-glow glow-red"></div>
+    <div class="ambient-glow glow-amber"></div>
+
+    <div class="blocked-card">
+        <!-- Shield / Access Denied Icon -->
+        <div class="icon-container">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+        </div>
+
+        <!-- Heading -->
+        <h1 class="blocked-title">Akses Aplikasi Ditolak</h1>
+
+        <!-- Subtitle / Notice -->
+        <p class="blocked-subtitle">
+            Terdeteksi Menggunakan VPN atau Jaringan WAN, silahkan gunakan jaringan LAN
+        </p>
+
+        <!-- Detected IP Box -->
+        <div class="ip-badge-box">
+            <span class="ip-label">IP Terdeteksi :</span>
+            <span class="ip-value">{{ client_ip }}</span>
+        </div>
+
+        <!-- Footer -->
+        <div class="blocked-footer">
+            <span class="footer-dot"></span>
+            <span>Akses hanya diperbolehkan melalui jaringan internal/LAN</span>
+        </div>
+    </div>
+</body>
+</html>

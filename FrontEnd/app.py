@@ -17,11 +17,56 @@ from fastapi import FastAPI, Request, Response, Form, Depends, HTTPException, st
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import ipaddress
 import secrets
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 # Load environment configuration
 load_dotenv()
+
+# Allowed IP subnets (Strict LAN-only access control)
+ALLOWED_NETWORKS = [
+    ipaddress.ip_network("192.168.88.0/23"),  # covers 192.168.88.0 - 192.168.89.255
+    ipaddress.ip_network("88.88.88.0/24"),
+    ipaddress.ip_network("10.10.1.0/24"),
+    ipaddress.ip_network("192.168.70.0/24"),
+    ipaddress.ip_network("172.19.176.0/24"),
+    ipaddress.ip_network("192.168.90.0/24"),
+    ipaddress.ip_network("192.168.92.0/24"),
+    ipaddress.ip_network("192.168.96.0/22"),  # covers 192.168.96.0 - 192.168.99.255
+    ipaddress.ip_network("192.168.112.0/22"), # covers 192.168.112.0 - 192.168.115.255
+    ipaddress.ip_network("192.168.85.0/30"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+]
+
+def get_client_ip(request: Request) -> str:
+    """Extract real client IP address from proxy headers or connection socket."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        ip = xff.split(",")[0].strip()
+        if ip:
+            return ip
+    x_real = request.headers.get("x-real-ip")
+    if x_real:
+        return x_real.strip()
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+    if request.client and request.client.host:
+        return request.client.host.strip()
+    return "127.0.0.1"
+
+
+def is_ip_allowed(ip_str: str) -> bool:
+    """Verify if client IP address belongs to permitted internal/LAN subnets."""
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+        if getattr(ip_obj, "ipv4_mapped", None):
+            ip_obj = ip_obj.ipv4_mapped
+        return any(ip_obj in net for net in ALLOWED_NETWORKS)
+    except ValueError:
+        return False
 
 USER_WEB = os.environ.get("USER_WEB", "admin")
 USER_PASSWORD = os.environ.get("USER_PASSWORD", "raspberry")
@@ -130,6 +175,41 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 app = FastAPI(title="LumenLux-Zero Controller", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.middleware("http")
+async def ip_whitelist_middleware(request: Request, call_next):
+    # Allow static assets and favicon so styling and icons load cleanly
+    if request.url.path.startswith("/static/") or request.url.path == "/favicon.ico":
+        return await call_next(request)
+
+    client_ip = get_client_ip(request)
+    if not is_ip_allowed(client_ip):
+        logger.warning(
+            "[AKSES DITOLAK] IP '%s' mencoba mengakses '%s' (Di luar subnet LAN)",
+            client_ip, request.url.path
+        )
+        if request.url.path.startswith("/api/") or request.url.path == "/stream":
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "status": "forbidden",
+                    "error": "Akses Aplikasi Ditolak",
+                    "detail": "Terdeteksi Menggunakan VPN atau Jaringan WAN, silahkan gunakan jaringan LAN",
+                    "ip_terdeteksi": client_ip,
+                    "footer": "Akses hanya diperbolehkan melalui jaringan internal/LAN"
+                }
+            )
+
+        return templates.TemplateResponse(
+            request=request,
+            name="blocked.html",
+            context={
+                "client_ip": client_ip
+            },
+            status_code=403
+        )
+
+    return await call_next(request)
 
 # Shared HTTPX client with connection pooling and timeouts
 backend_client: Optional[httpx.AsyncClient] = None

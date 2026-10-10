@@ -5,6 +5,7 @@ High-efficiency REST API & MJPEG streaming server built with Python standard lib
 Runs on GPIO 18 for WS2812B strip and manages USB/CSI cameras.
 """
 import argparse
+import ipaddress
 import json
 import logging
 import os
@@ -13,6 +14,31 @@ import sys
 import time
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+
+# Allowed IP subnets (Strict LAN-only access control)
+ALLOWED_NETWORKS = [
+    ipaddress.ip_network("192.168.88.0/23"),  # covers 192.168.88.0 - 192.168.89.255
+    ipaddress.ip_network("88.88.88.0/24"),
+    ipaddress.ip_network("10.10.1.0/24"),
+    ipaddress.ip_network("192.168.70.0/24"),
+    ipaddress.ip_network("172.19.176.0/24"),
+    ipaddress.ip_network("192.168.90.0/24"),
+    ipaddress.ip_network("192.168.92.0/24"),
+    ipaddress.ip_network("192.168.96.0/22"),  # covers 192.168.96.0 - 192.168.99.255
+    ipaddress.ip_network("192.168.112.0/22"), # covers 192.168.112.0 - 192.168.115.255
+    ipaddress.ip_network("192.168.85.0/30"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+]
+
+def is_ip_allowed(ip_str: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+        if getattr(ip_obj, "ipv4_mapped", None):
+            ip_obj = ip_obj.ipv4_mapped
+        return any(ip_obj in net for net in ALLOWED_NETWORKS)
+    except ValueError:
+        return False
 
 # Import managers
 from led_manager import LEDManager
@@ -108,7 +134,29 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_bytes)
 
+    def _check_ip_allowed(self) -> bool:
+        client_ip = self.headers.get("X-Forwarded-For")
+        if client_ip:
+            client_ip = client_ip.split(",")[0].strip()
+        else:
+            client_ip = self.headers.get("X-Real-IP") or self.client_address[0]
+            
+        if not is_ip_allowed(client_ip):
+            logger.warning("[AKSES DITOLAK] IP '%s' mencoba mengakses backend.", client_ip)
+            self._send_json({
+                "status": "forbidden",
+                "error": "Akses Aplikasi Ditolak",
+                "detail": "Terdeteksi Menggunakan VPN atau Jaringan WAN, silahkan gunakan jaringan LAN",
+                "ip_terdeteksi": client_ip,
+                "footer": "Akses hanya diperbolehkan melalui jaringan internal/LAN"
+            }, status_code=403)
+            return False
+        return True
+
     def do_GET(self):
+        if not self._check_ip_allowed():
+            return
+
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         if not path:
@@ -170,6 +218,9 @@ class APIHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not Found", "path": path}, status_code=404)
 
     def do_POST(self):
+        if not self._check_ip_allowed():
+            return
+
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         data = self._read_json_body()
