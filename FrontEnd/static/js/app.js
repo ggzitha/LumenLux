@@ -62,13 +62,17 @@ const state = {
         deviceId: null,
         resolution: "1920x1080",
         digital_zoom: 1.0,
+        rotation: 0,
         flip_h: false,
         flip_v: false,
         grid_active: false,
+        focus_mode: "continuous",
+        focus_distance: 0,
         filters: {
             brightness: 100,
             contrast: 100,
-            saturation: 100
+            saturation: 100,
+            sharpness: 100
         }
     },
     system: {
@@ -129,6 +133,9 @@ function saveConfig() {
                 deviceId: state.deviceCamera.deviceId,
                 resolution: state.deviceCamera.resolution,
                 digital_zoom: state.deviceCamera.digital_zoom,
+                rotation: state.deviceCamera.rotation,
+                focus_mode: state.deviceCamera.focus_mode,
+                focus_distance: state.deviceCamera.focus_distance,
                 flip_h: state.deviceCamera.flip_h,
                 flip_v: state.deviceCamera.flip_v,
                 grid_active: state.deviceCamera.grid_active,
@@ -1883,13 +1890,60 @@ function applyDeviceViewportTransforms() {
     const video = document.getElementById("deviceCameraVideo");
     if (!video) return;
 
+    const rot = state.deviceCamera.rotation || 0;
     const scale = state.deviceCamera.digital_zoom || 1.0;
-    const scaleX = state.deviceCamera.flip_h ? -scale : scale;
-    const scaleY = state.deviceCamera.flip_v ? -scale : scale;
-    video.style.transform = `scale(${scaleX}, ${scaleY})`;
+    const scaleX = (state.deviceCamera.flip_h ? -scale : scale);
+    const scaleY = (state.deviceCamera.flip_v ? -scale : scale);
 
-    const { brightness, contrast } = state.deviceCamera.filters;
-    video.style.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+    video.style.transformOrigin = "center center";
+    video.style.transform = `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`;
+
+    const filters = state.deviceCamera.filters || {};
+    const brightness = filters.brightness ?? 100;
+    const contrast = filters.contrast ?? 100;
+    const saturation = filters.saturation ?? 100;
+    const sharpness = filters.sharpness ?? 100;
+
+    let filterStr = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+    if (sharpness && sharpness !== 100) {
+        const sharpFactor = (sharpness - 100) / 100;
+        filterStr += ` contrast(${100 + sharpFactor * 25}%)`;
+    }
+    video.style.filter = filterStr;
+}
+
+async function applyDeviceHardwareConstraints() {
+    if (!state.deviceCamera.stream) return;
+    const tracks = state.deviceCamera.stream.getVideoTracks();
+    if (!tracks || tracks.length === 0) return;
+    const track = tracks[0];
+
+    try {
+        const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+        const advanced = [];
+
+        // Hardware focus mode & distance
+        if (capabilities.focusMode) {
+            const mode = state.deviceCamera.focus_mode === "manual" ? "manual" : "continuous";
+            if (capabilities.focusMode.includes(mode)) {
+                const adv = { focusMode: mode };
+                if (mode === "manual" && capabilities.focusDistance && state.deviceCamera.focus_distance !== undefined) {
+                    const min = capabilities.focusDistance.min || 0;
+                    const max = capabilities.focusDistance.max || 100;
+                    const distVal = min + (state.deviceCamera.focus_distance / 100) * (max - min);
+                    adv.focusDistance = distVal;
+                }
+                advanced.push(adv);
+            }
+        }
+
+        if (advanced.length > 0) {
+            await track.applyConstraints({ advanced });
+            console.log("[DeviceCam] Hardware constraints applied:", advanced);
+        }
+    } catch (e) {
+        console.warn("[DeviceCam] Hardware constraints not supported by device/browser:", e);
+    }
 }
 
 async function enumerateDeviceCameras() {
@@ -1967,6 +2021,7 @@ async function startDeviceCameraStream() {
 
         await enumerateDeviceCameras();
         applyDeviceViewportTransforms();
+        await applyDeviceHardwareConstraints();
         updateSnapshotButtonState();
         showToast("Device camera activated successfully!");
     } catch (err) {
@@ -2056,6 +2111,36 @@ function setupDeviceCameraManager() {
         }
     });
 
+    // Rotation Controls (Dedicated Toolbar Button & Overlay Select)
+    const btnRotate = document.getElementById("btnDeviceRotate");
+    const lblRotate = document.getElementById("lblDeviceRotate");
+    const rotateSelect = document.getElementById("deviceRotateSelect");
+
+    function updateRotateUI(deg) {
+        state.deviceCamera.rotation = deg;
+        if (rotateSelect) rotateSelect.value = String(deg);
+        if (lblRotate) lblRotate.textContent = deg === 0 ? "Rotate" : `Rotate (${deg}°)`;
+        btnRotate?.classList.toggle("active", deg !== 0);
+        applyDeviceViewportTransforms();
+        saveConfig();
+    }
+
+    if (rotateSelect) {
+        rotateSelect.value = String(state.deviceCamera.rotation || 0);
+        rotateSelect.addEventListener("change", (e) => {
+            const deg = parseInt(e.target.value, 10) || 0;
+            updateRotateUI(deg);
+            showToast(`Device camera rotated to ${deg}°`);
+        });
+    }
+
+    btnRotate?.addEventListener("click", () => {
+        const currentDeg = state.deviceCamera.rotation || 0;
+        const nextDeg = (currentDeg + 90) % 360;
+        updateRotateUI(nextDeg);
+        showToast(`Device camera rotated to ${nextDeg}°`);
+    });
+
     // Flip Controls
     const btnFlipH = document.getElementById("btnDeviceFlipH");
     btnFlipH?.classList.toggle("active", state.deviceCamera.flip_h);
@@ -2097,6 +2182,39 @@ function setupDeviceCameraManager() {
             document.exitFullscreen();
         }
     });
+
+    // Focus / Auto Focus Mode & Distance
+    const focusSelect = document.getElementById("deviceFocusModeSelect");
+    const groupFocusDist = document.getElementById("groupDeviceFocusDistance");
+    const focusDistSlider = document.getElementById("deviceFocusDistanceSlider");
+    const focusDistBadge = document.getElementById("deviceFocusDistanceBadge");
+
+    if (focusSelect) {
+        focusSelect.value = state.deviceCamera.focus_mode || "continuous";
+        if (groupFocusDist) {
+            groupFocusDist.style.display = focusSelect.value === "manual" ? "flex" : "none";
+        }
+        focusSelect.addEventListener("change", (e) => {
+            state.deviceCamera.focus_mode = e.target.value;
+            if (groupFocusDist) {
+                groupFocusDist.style.display = e.target.value === "manual" ? "flex" : "none";
+            }
+            applyDeviceHardwareConstraints();
+            saveConfig();
+            showToast(`Focus mode: ${e.target.value === "manual" ? "Manual Focus" : "Auto Focus"}`);
+        });
+    }
+
+    if (focusDistSlider && focusDistBadge) {
+        focusDistSlider.value = state.deviceCamera.focus_distance || 0;
+        focusDistBadge.textContent = focusDistSlider.value;
+        focusDistSlider.addEventListener("input", (e) => {
+            state.deviceCamera.focus_distance = parseInt(e.target.value, 10);
+            focusDistBadge.textContent = state.deviceCamera.focus_distance;
+            applyDeviceHardwareConstraints();
+            saveConfig();
+        });
+    }
 
     // Settings Inputs
     const sourceSelect = document.getElementById("deviceSourceSelect");
@@ -2154,6 +2272,32 @@ function setupDeviceCameraManager() {
         contrastSlider.addEventListener("input", (e) => {
             state.deviceCamera.filters.contrast = parseInt(e.target.value, 10);
             contrastBadge.textContent = `${state.deviceCamera.filters.contrast}%`;
+            applyDeviceViewportTransforms();
+            saveConfig();
+        });
+    }
+
+    const satSlider = document.getElementById("deviceSaturationSlider");
+    const satBadge = document.getElementById("deviceSaturationBadge");
+    if (satSlider && satBadge) {
+        satSlider.value = state.deviceCamera.filters.saturation ?? 100;
+        satBadge.textContent = `${satSlider.value}%`;
+        satSlider.addEventListener("input", (e) => {
+            state.deviceCamera.filters.saturation = parseInt(e.target.value, 10);
+            satBadge.textContent = `${state.deviceCamera.filters.saturation}%`;
+            applyDeviceViewportTransforms();
+            saveConfig();
+        });
+    }
+
+    const sharpSlider = document.getElementById("deviceSharpnessSlider");
+    const sharpBadge = document.getElementById("deviceSharpnessBadge");
+    if (sharpSlider && sharpBadge) {
+        sharpSlider.value = state.deviceCamera.filters.sharpness ?? 100;
+        sharpBadge.textContent = `${sharpSlider.value}%`;
+        sharpSlider.addEventListener("input", (e) => {
+            state.deviceCamera.filters.sharpness = parseInt(e.target.value, 10);
+            sharpBadge.textContent = `${state.deviceCamera.filters.sharpness}%`;
             applyDeviceViewportTransforms();
             saveConfig();
         });
@@ -2301,54 +2445,77 @@ function drawTwibbonBackground(ctx, totalWidth, totalHeight, border, timestampSt
     ctx.restore();
 }
 
-function drawMiddleDivider(ctx, x, y, width, height) {
-    // 1. Dark sleek glass background for divider
-    const divGrad = ctx.createLinearGradient(x, y, x + width, y + height);
-    divGrad.addColorStop(0, "#080e1c");
-    divGrad.addColorStop(0.5, "#101d36");
-    divGrad.addColorStop(1, "#080e1c");
-    ctx.fillStyle = divGrad;
-    ctx.fillRect(x, y, width, height);
+function drawMiddleDivider(ctx, x, y, width) {
+    const cx = x + width / 2;
+    const pillW = 120;
+    const pillH = 34;
+    const pillX = cx - pillW / 2;
+    const pillY = y - pillH / 2;
+    const radius = 8;
 
-    // Subtle cyan borders
-    ctx.strokeStyle = "rgba(0, 242, 254, 0.45)";
+    ctx.save();
+
+    // 1. Sleek cyan dashed line extending across entire content width, broken only by center badge
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.75)";
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(x, y, width, height);
+    ctx.setLineDash([8, 6]);
 
-    // 2. Draw user-specified middle format:
-    // ---------------⇑---------------
-    //                  Chamber
-    //                    Device
-    // ---------------⇓---------------
+    // Left dashed segment
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(pillX, y);
+    ctx.stroke();
+
+    // Right dashed segment
+    ctx.beginPath();
+    ctx.moveTo(pillX + pillW, y);
+    ctx.lineTo(x + width, y);
+    ctx.stroke();
+
+    ctx.setLineDash([]); // Reset dash for badge
+
+    // 2. Futuristic dark glass pill badge in center
+    ctx.fillStyle = "rgba(6, 11, 24, 0.92)";
+    ctx.strokeStyle = "rgba(0, 242, 254, 0.6)";
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    if (ctx.roundRect) {
+        ctx.roundRect(pillX, pillY, pillW, pillH, radius);
+    } else {
+        ctx.moveTo(pillX + radius, pillY);
+        ctx.lineTo(pillX + pillW - radius, pillY);
+        ctx.quadraticCurveTo(pillX + pillW, pillY, pillX + pillW, pillY + radius);
+        ctx.lineTo(pillX + pillW, pillY + pillH - radius);
+        ctx.quadraticCurveTo(pillX + pillW, pillY + pillH, pillX + pillW - radius, pillY + pillH);
+        ctx.lineTo(pillX + radius, pillY + pillH);
+        ctx.quadraticCurveTo(pillX, pillY + pillH, pillX, pillY + pillH - radius);
+        ctx.lineTo(pillX, pillY + radius);
+        ctx.quadraticCurveTo(pillX, pillY, pillX + radius, pillY);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    // 3. Chamber and Device Labels + Divider Symbol
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    const cx = x + width / 2;
-    const lineSpacing = height / 4;
-
-    // Line 1: ---------------⇑---------------
-    ctx.font = "700 13px 'Courier New', monospace";
-    ctx.fillStyle = "rgba(0, 242, 254, 0.75)";
-    ctx.fillText("---------------⇑---------------", cx, y + (lineSpacing * 0.75));
-
-    // Line 2: Chamber
-    ctx.font = "700 14px 'Outfit', 'Inter', sans-serif";
+    // Top: Chamber (Cyan)
+    ctx.font = "700 11.5px 'Outfit', 'Inter', sans-serif";
     ctx.fillStyle = "#38bdf8";
-    ctx.fillText("Chamber", cx, y + (lineSpacing * 1.55));
+    ctx.fillText("Chamber", cx, y - 7);
 
-    // Line 3: Device
-    ctx.font = "700 14px 'Outfit', 'Inter', sans-serif";
+    // Center divider symbol: ↕
+    ctx.font = "700 9.5px monospace";
+    ctx.fillStyle = "rgba(0, 242, 254, 0.7)";
+    ctx.fillText("↕", cx, y);
+
+    // Bottom: Device (Purple)
+    ctx.font = "700 11.5px 'Outfit', 'Inter', sans-serif";
     ctx.fillStyle = "#c084fc";
-    ctx.fillText("Device", cx, y + (lineSpacing * 2.35));
+    ctx.fillText("Device", cx, y + 8);
 
-    // Line 4: ---------------⇓---------------
-    ctx.font = "700 13px 'Courier New', monospace";
-    ctx.fillStyle = "rgba(192, 132, 252, 0.75)";
-    ctx.fillText("---------------⇓---------------", cx, y + (lineSpacing * 3.15));
-
-    // Reset alignment
-    ctx.textAlign = "start";
-    ctx.textBaseline = "alphabetic";
+    ctx.restore();
 }
 
 function drawLumenLuxTwibbonStamp(ctx, totalWidth, totalHeight, border) {
@@ -2478,61 +2645,86 @@ async function captureMultiCameraSnapshot() {
         const timestampStr = formatIndonesianTimestamp();
         const cleanTimestamp = timestampStr.replace(/[@:]/g, "-").replace(/\s+/g, "_");
 
+        const slotW = 1920;
+        const slotH = 1080;
+
         if (imgChamber && imgDevice) {
-            // === DUAL MULTI-CAMERA VERTICAL STACK ===
-            const w1 = imgChamber.naturalWidth || imgChamber.width;
-            const h1 = imgChamber.naturalHeight || imgChamber.height;
-            const w2 = imgDevice.width;
-            const h2 = imgDevice.height;
-
-            // Proportional sizing: follow lowest resolution (lowest width)
-            const targetWidth = Math.min(w1, w2);
-            const targetH1 = Math.round(h1 * (targetWidth / w1));
-            const targetH2 = Math.round(h2 * (targetWidth / w2));
-            const dividerHeight = Math.max(60, Math.round(targetWidth * 0.04));
-
-            // Total canvas with 50px twibbon outside border (50px left right up down: +100px)
-            canvas.width = targetWidth + (border * 2);
-            canvas.height = targetH1 + dividerHeight + targetH2 + (border * 2);
+            // === DUAL MULTI-CAMERA VERTICAL STACK (2020 x 2260) ===
+            canvas.width = slotW + (border * 2); // 1920 + 100 = 2020
+            canvas.height = (slotH * 2) + (border * 2); // 2160 + 100 = 2260
 
             // Draw Twibbon Gradient Background & Scattered Timestamp Watermark
             drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
 
-            // Draw Chamber Image (Upper)
+            // Draw Chamber Image (Upper Slot: x=50, y=50, w=1920, h=1080)
             ctx.save();
             ctx.beginPath();
-            ctx.rect(border, border, targetWidth, targetH1);
+            ctx.rect(border, border, slotW, slotH);
             ctx.clip();
-            const cx = border + targetWidth / 2;
-            const cy = border + targetH1 / 2;
+            const cx = border + slotW / 2;
+            const cy = border + slotH / 2;
             ctx.translate(cx, cy);
             ctx.scale(state.camera.flip_h ? -1 : 1, state.camera.flip_v ? -1 : 1);
             const z1 = state.camera.digital_zoom || 1.0;
             ctx.scale(z1, z1);
             ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
-            ctx.drawImage(imgChamber, -targetWidth / 2, -targetH1 / 2, targetWidth, targetH1);
+            const w1 = imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            const coverScale1 = Math.max(slotW / w1, slotH / h1);
+            const drawW1 = w1 * coverScale1;
+            const drawH1 = h1 * coverScale1;
+            ctx.drawImage(imgChamber, -drawW1 / 2, -drawH1 / 2, drawW1, drawH1);
             ctx.restore();
 
-            // Draw Middle Divider
-            const divY = border + targetH1;
-            drawMiddleDivider(ctx, border, divY, targetWidth, dividerHeight);
-
-            // Draw Device Image (Bottom)
+            // Draw Device Image (Bottom Slot: x=50, y=1130, w=1920, h=1080)
+            const divY = border + slotH; // 50 + 1080 = 1130
             ctx.save();
             ctx.beginPath();
-            ctx.rect(border, divY + dividerHeight, targetWidth, targetH2);
+            ctx.rect(border, divY, slotW, slotH);
             ctx.clip();
-            const dx = border + targetWidth / 2;
-            const dy = divY + dividerHeight + targetH2 / 2;
+            const dx = border + slotW / 2;
+            const dy = divY + slotH / 2;
             ctx.translate(dx, dy);
-            ctx.scale(state.deviceCamera.flip_h ? -1 : 1, state.deviceCamera.flip_v ? -1 : 1);
+
+            // Apply Device Camera Rotation (0°, 90°, 180°, 270°)
+            const rot = state.deviceCamera.rotation || 0;
+            ctx.rotate((rot * Math.PI) / 180);
+
+            // Apply Flip and Zoom
             const z2 = state.deviceCamera.digital_zoom || 1.0;
-            ctx.scale(z2, z2);
-            ctx.filter = `brightness(${state.deviceCamera.filters.brightness}%) contrast(${state.deviceCamera.filters.contrast}%)`;
-            ctx.drawImage(imgDevice, -targetWidth / 2, -targetH2 / 2, targetWidth, targetH2);
+            ctx.scale((state.deviceCamera.flip_h ? -1 : 1) * z2, (state.deviceCamera.flip_v ? -1 : 1) * z2);
+
+            // Apply Device Filters (brightness, contrast, saturation, sharpness)
+            const devFilters = state.deviceCamera.filters || {};
+            const devBright = devFilters.brightness ?? 100;
+            const devContrast = devFilters.contrast ?? 100;
+            const devSat = devFilters.saturation ?? 100;
+            const devSharp = devFilters.sharpness ?? 100;
+            let filterStr = `brightness(${devBright}%) contrast(${devContrast}%) saturate(${devSat}%)`;
+            if (devSharp !== 100) {
+                const sharpFactor = (devSharp - 100) / 100;
+                filterStr += ` contrast(${100 + sharpFactor * 25}%)`;
+            }
+            ctx.filter = filterStr;
+
+            // Aspect cover calculation taking rotation into account
+            const w2 = imgDevice.width;
+            const h2 = imgDevice.height;
+            let coverScale2;
+            if (rot === 90 || rot === 270) {
+                coverScale2 = Math.max(slotH / w2, slotW / h2);
+            } else {
+                coverScale2 = Math.max(slotW / w2, slotH / h2);
+            }
+            const drawW2 = w2 * coverScale2;
+            const drawH2 = h2 * coverScale2;
+            ctx.drawImage(imgDevice, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
             ctx.restore();
 
-            // Draw Official LumenLux Stamp and Logo on right corner of twibbon
+            // Draw Middle Divider (Thin dashed seam across full width with Chamber/Device indicator)
+            drawMiddleDivider(ctx, border, divY, slotW);
+
+            // Draw Official LumenLux Stamp on right corner of twibbon
             drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);
 
             // Download Combined Picture
@@ -2540,26 +2732,29 @@ async function captureMultiCameraSnapshot() {
             showToast(`Combined dual-snapshot downloaded (${canvas.width}x${canvas.height})!`);
 
         } else if (imgChamber) {
-            // === SINGLE CHAMBER CAMERA WITH 50px TWIBBON ===
-            const w1 = imgChamber.naturalWidth || imgChamber.width;
-            const h1 = imgChamber.naturalHeight || imgChamber.height;
-            canvas.width = w1 + (border * 2);
-            canvas.height = h1 + (border * 2);
+            // === SINGLE CHAMBER CAMERA WITH 50px TWIBBON (2020 x 1180) ===
+            canvas.width = slotW + (border * 2);
+            canvas.height = slotH + (border * 2);
 
             drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
 
             ctx.save();
             ctx.beginPath();
-            ctx.rect(border, border, w1, h1);
+            ctx.rect(border, border, slotW, slotH);
             ctx.clip();
-            const cx = border + w1 / 2;
-            const cy = border + h1 / 2;
+            const cx = border + slotW / 2;
+            const cy = border + slotH / 2;
             ctx.translate(cx, cy);
             ctx.scale(state.camera.flip_h ? -1 : 1, state.camera.flip_v ? -1 : 1);
             const z = state.camera.digital_zoom || 1.0;
             ctx.scale(z, z);
             ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
-            ctx.drawImage(imgChamber, -w1 / 2, -h1 / 2, w1, h1);
+            const w1 = imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            const coverScale1 = Math.max(slotW / w1, slotH / h1);
+            const drawW1 = w1 * coverScale1;
+            const drawH1 = h1 * coverScale1;
+            ctx.drawImage(imgChamber, -drawW1 / 2, -drawH1 / 2, drawW1, drawH1);
             ctx.restore();
 
             drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);
@@ -2567,26 +2762,49 @@ async function captureMultiCameraSnapshot() {
             showToast(`Chamber snapshot downloaded (${canvas.width}x${canvas.height})!`);
 
         } else if (imgDevice) {
-            // === SINGLE DEVICE CAMERA WITH 50px TWIBBON ===
-            const w2 = imgDevice.width;
-            const h2 = imgDevice.height;
-            canvas.width = w2 + (border * 2);
-            canvas.height = h2 + (border * 2);
+            // === SINGLE DEVICE CAMERA WITH 50px TWIBBON (2020 x 1180) ===
+            canvas.width = slotW + (border * 2);
+            canvas.height = slotH + (border * 2);
 
             drawTwibbonBackground(ctx, canvas.width, canvas.height, border, timestampStr);
 
             ctx.save();
             ctx.beginPath();
-            ctx.rect(border, border, w2, h2);
+            ctx.rect(border, border, slotW, slotH);
             ctx.clip();
-            const dx = border + w2 / 2;
-            const dy = border + h2 / 2;
+            const dx = border + slotW / 2;
+            const dy = border + slotH / 2;
             ctx.translate(dx, dy);
-            ctx.scale(state.deviceCamera.flip_h ? -1 : 1, state.deviceCamera.flip_v ? -1 : 1);
-            const z = state.deviceCamera.digital_zoom || 1.0;
-            ctx.scale(z, z);
-            ctx.filter = `brightness(${state.deviceCamera.filters.brightness}%) contrast(${state.deviceCamera.filters.contrast}%)`;
-            ctx.drawImage(imgDevice, -w2 / 2, -h2 / 2, w2, h2);
+
+            const rot = state.deviceCamera.rotation || 0;
+            ctx.rotate((rot * Math.PI) / 180);
+
+            const z2 = state.deviceCamera.digital_zoom || 1.0;
+            ctx.scale((state.deviceCamera.flip_h ? -1 : 1) * z2, (state.deviceCamera.flip_v ? -1 : 1) * z2);
+
+            const devFilters = state.deviceCamera.filters || {};
+            const devBright = devFilters.brightness ?? 100;
+            const devContrast = devFilters.contrast ?? 100;
+            const devSat = devFilters.saturation ?? 100;
+            const devSharp = devFilters.sharpness ?? 100;
+            let filterStr = `brightness(${devBright}%) contrast(${devContrast}%) saturate(${devSat}%)`;
+            if (devSharp !== 100) {
+                const sharpFactor = (devSharp - 100) / 100;
+                filterStr += ` contrast(${100 + sharpFactor * 25}%)`;
+            }
+            ctx.filter = filterStr;
+
+            const w2 = imgDevice.width;
+            const h2 = imgDevice.height;
+            let coverScale2;
+            if (rot === 90 || rot === 270) {
+                coverScale2 = Math.max(slotH / w2, slotW / h2);
+            } else {
+                coverScale2 = Math.max(slotW / w2, slotH / h2);
+            }
+            const drawW2 = w2 * coverScale2;
+            const drawH2 = h2 * coverScale2;
+            ctx.drawImage(imgDevice, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
             ctx.restore();
 
             drawLumenLuxTwibbonStamp(ctx, canvas.width, canvas.height, border);

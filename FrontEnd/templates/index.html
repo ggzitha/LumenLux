@@ -12,7 +12,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=3.9">
+    <link rel="stylesheet" href="/static/css/main.css?v=4.0">
 </head>
 
 <body>
@@ -585,6 +585,30 @@
                                     </select>
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceRotateSelect">Rotation</label>
+                                    <select id="deviceRotateSelect" class="select-custom">
+                                        <option value="0" selected>0° (Normal)</option>
+                                        <option value="90">90° (Clockwise)</option>
+                                        <option value="180">180° (Inverted)</option>
+                                        <option value="270">270° (Counter-Clockwise)</option>
+                                    </select>
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceFocusModeSelect">Focus / Auto Focus</label>
+                                    <select id="deviceFocusModeSelect" class="select-custom">
+                                        <option value="continuous" selected>Auto Focus (Continuous)</option>
+                                        <option value="manual">Manual Focus</option>
+                                    </select>
+                                </div>
+                                <div class="field-group" id="groupDeviceFocusDistance" style="margin-bottom: 12px; display: none;">
+                                    <label class="field-label" for="deviceFocusDistanceSlider">
+                                        Focus Distance
+                                        <span class="field-val-badge" id="deviceFocusDistanceBadge">0</span>
+                                    </label>
+                                    <input type="range" id="deviceFocusDistanceSlider" class="slider-custom" min="0" max="100"
+                                        value="0">
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
                                     <label class="field-label" for="deviceZoomSlider">
                                         Digital Zoom
                                         <span class="field-val-badge" id="deviceZoomBadge">1.0x</span>
@@ -608,11 +632,27 @@
                                     <input type="range" id="deviceContrastSlider" class="slider-custom" min="50" max="200"
                                         value="100">
                                 </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceSaturationSlider">
+                                        Saturation
+                                        <span class="field-val-badge" id="deviceSaturationBadge">100%</span>
+                                    </label>
+                                    <input type="range" id="deviceSaturationSlider" class="slider-custom" min="0" max="200"
+                                        value="100">
+                                </div>
+                                <div class="field-group" style="margin-bottom: 12px;">
+                                    <label class="field-label" for="deviceSharpnessSlider">
+                                        Sharpness
+                                        <span class="field-val-badge" id="deviceSharpnessBadge">100%</span>
+                                    </label>
+                                    <input type="range" id="deviceSharpnessSlider" class="slider-custom" min="50" max="200"
+                                        value="100">
+                                </div>
                             </div>
                         </div>
                     </div> <!-- /deviceViewportCard -->
 
-                    <!-- Device Dedicated Toolbar (6 Controls: Toggle, Settings, Fullscreen, Flip H, Flip V, Grid) -->
+                    <!-- Device Dedicated Toolbar (Controls: Toggle, Settings, Rotate, Fullscreen, Flip H, Flip V, Grid) -->
                     <div class="slot-toolbar" id="deviceToolbar">
                         <button class="btn-icon" id="btnToggleDeviceCamStream" title="Toggle device camera stream">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -627,6 +667,12 @@
                                     d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
                             </svg>
                             <span>Settings</span>
+                        </button>
+                        <button class="btn-icon" id="btnDeviceRotate" title="Rotate 90° (0°, 90°, 180°, 270°)">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7.11 8.53L5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.51-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.89-1.6-1.01-2.47zm1.02 5.47l-1.41 1.41C7.14 21.07 8.76 21.84 10.5 21.97v-2.02c-1.25-.13-2.43-.69-3.39-1.48zM13.5 21.97c1.74-.13 3.36-.9 4.8-2.09l-1.41-1.41c-.96.79-2.14 1.35-3.39 1.48v2.02zm4.41-5.08l1.41 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.12.87-.49 1.72-1.01 2.48zm1.02-4.89h2.02c-.17-1.39-.72-2.73-1.62-3.89l-1.41 1.42c.52.75.89 1.6 1.01 2.47zM12 2C6.48 2 2 6.48 2 12h2c0-4.41 3.59-8 8-8s8 3.59 8 8h2c0-5.52-4.48-10-10-10z" />
+                            </svg>
+                            <span id="lblDeviceRotate">Rotate</span>
                         </button>
                         <button class="btn-icon" id="btnDeviceFullscreen" title="Toggle Fullscreen">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -1019,7 +1065,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=4.0"></script>
+    <script src="/static/js/app.js?v=4.3"></script>
 </body>
 
 </html>
