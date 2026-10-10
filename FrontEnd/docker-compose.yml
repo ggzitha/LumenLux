@@ -1,24 +1,42 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  lumen-frontend:
+  lumenlux-frontend:
+    container_name: lumenlux-frontend
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: lumen_zero_frontend
-    restart: unless-stopped
+    # image: kenconex/lumenlux-frontend:latest
+    env_file:
+      - ./.env # Ini .env tetap di dalam dockge
     ports:
-      - "8080:8080"
-    environment:
-      - USER_WEB=${USER_WEB:-admin}
-      - USER_PASSWORD=${USER_PASSWORD:-raspberry}
-      - BECKEND_RPI_IP=${BECKEND_RPI_IP:-192.168.88.24}
-      - BECKEND_RPI_PORT=${BECKEND_RPI_PORT:-5000}
-      - INACTIVITY_TIME=${INACTIVITY_TIME:-600}
-      - FRONTEND_PORT=8080
-      - SECRET_KEY=${SECRET_KEY:-lumen-zero-super-secret-key-change-me}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - "${FRONTEND_PORT:-8080}:8080/tcp"          # Web Dashboard & Streaming
+    volumes:
+      - ./data:/app/data                          # Root data volume
+      - ./data/images:/app/data/images            # Saved snapshots & capture archives
+      - ./data/models:/app/data/models            # Vision & ML models
+      - ./data/tessdata:/app/data/tessdata        # Custom Tesseract OCR language datasets
+      - ./data/tessdata:/usr/share/tesseract-ocr/5/tessdata # System Tesseract tessdata sync
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      lumen-net:
+        ipv4_address: 10.101.29.2
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      autoheal-this-app: "true"
+    restart: unless-stopped
+
+networks:
+  lumen-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: lumen-net
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.101.29.0/24
+          gateway: 10.101.29.1

@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  lumenlux-frontend:
+    container_name: lumenlux-frontend
+    build:
+      context: ./FrontEnd
+      dockerfile: Dockerfile
+    # image: kenconex/lumenlux-frontend:latest
+    env_file:
+      - ./FrontEnd/.env
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080/tcp"          # Web Dashboard & Streaming
+    volumes:
+      - ./FrontEnd/data:/app/data                          # Root data volume
+      - ./FrontEnd/data/images:/app/data/images            # Saved snapshots & capture archives
+      - ./FrontEnd/data/models:/app/data/models            # Vision & ML models
+      - ./FrontEnd/data/tessdata:/app/data/tessdata        # Custom Tesseract OCR language datasets
+      - ./FrontEnd/data/tessdata:/usr/share/tesseract-ocr/5/tessdata # System Tesseract tessdata sync
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      lumen-net:
+        ipv4_address: 10.101.29.2
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      autoheal-this-app: "true"
+    restart: unless-stopped
+
+networks:
+  lumen-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: lumen-net
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.101.29.0/24
+          gateway: 10.101.29.1

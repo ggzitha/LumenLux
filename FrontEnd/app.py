@@ -25,20 +25,41 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 load_dotenv()
 
 # Allowed IP subnets (Strict LAN-only access control)
-ALLOWED_NETWORKS = [
-    ipaddress.ip_network("192.168.88.0/23"),  # covers 192.168.88.0 - 192.168.89.255
-    ipaddress.ip_network("88.88.88.0/24"),
-    ipaddress.ip_network("10.10.1.0/24"),
-    ipaddress.ip_network("192.168.70.0/24"),
-    ipaddress.ip_network("172.19.176.0/24"),
-    ipaddress.ip_network("192.168.90.0/24"),
-    ipaddress.ip_network("192.168.92.0/24"),
-    ipaddress.ip_network("192.168.96.0/22"),  # covers 192.168.96.0 - 192.168.99.255
-    ipaddress.ip_network("192.168.112.0/22"), # covers 192.168.112.0 - 192.168.115.255
-    ipaddress.ip_network("192.168.85.0/30"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
+DEFAULT_ALLOWED_NETWORKS = [
+    "192.168.88.0/23",  # covers 192.168.88.0 - 192.168.89.255
+    "88.88.88.0/24",
+    "10.10.1.0/24",
+    "10.101.29.0/24",   # Docker internal bridge network
+    "192.168.70.0/24",
+    "172.19.176.0/24",
+    "192.168.90.0/24",
+    "192.168.92.0/24",
+    "192.168.96.0/22",  # covers 192.168.96.0 - 192.168.99.255
+    "192.168.112.0/22", # covers 192.168.112.0 - 192.168.115.255
+    "192.168.85.0/30",
+    "127.0.0.0/8",
+    "::1/128",
 ]
+
+ALLOWED_NETWORKS = []
+for net_str in DEFAULT_ALLOWED_NETWORKS:
+    try:
+        ALLOWED_NETWORKS.append(ipaddress.ip_network(net_str.strip()))
+    except ValueError:
+        pass
+
+# Optional extra subnets from .env
+extra_nets = os.environ.get("EXTRA_ALLOWED_NETWORKS", "")
+if extra_nets:
+    for item in extra_nets.split(","):
+        item = item.strip()
+        if item:
+            try:
+                net_obj = ipaddress.ip_network(item)
+                if net_obj not in ALLOWED_NETWORKS:
+                    ALLOWED_NETWORKS.append(net_obj)
+            except ValueError:
+                pass
 
 def get_client_ip(request: Request) -> str:
     """Extract real client IP address from proxy headers or connection socket."""
@@ -161,10 +182,20 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
+# Persistent Volume directories (Images, ML Models, and Tesseract OCR datasets)
+DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
+IMAGES_DIR = Path(os.environ.get("IMAGES_DIR", DATA_DIR / "images"))
+MODELS_DIR = Path(os.environ.get("MODELS_DIR", DATA_DIR / "models"))
+TESSDATA_DIR = Path(os.environ.get("TESSDATA_DIR", DATA_DIR / "tessdata"))
+
 # Ensure directories exist
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 (STATIC_DIR / "css").mkdir(parents=True, exist_ok=True)
 (STATIC_DIR / "js").mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+TESSDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("frontend_app")

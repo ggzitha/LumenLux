@@ -17,20 +17,40 @@ from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 # Allowed IP subnets (Strict LAN-only access control)
-ALLOWED_NETWORKS = [
-    ipaddress.ip_network("192.168.88.0/23"),  # covers 192.168.88.0 - 192.168.89.255
-    ipaddress.ip_network("88.88.88.0/24"),
-    ipaddress.ip_network("10.10.1.0/24"),
-    ipaddress.ip_network("192.168.70.0/24"),
-    ipaddress.ip_network("172.19.176.0/24"),
-    ipaddress.ip_network("192.168.90.0/24"),
-    ipaddress.ip_network("192.168.92.0/24"),
-    ipaddress.ip_network("192.168.96.0/22"),  # covers 192.168.96.0 - 192.168.99.255
-    ipaddress.ip_network("192.168.112.0/22"), # covers 192.168.112.0 - 192.168.115.255
-    ipaddress.ip_network("192.168.85.0/30"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
+DEFAULT_ALLOWED_NETWORKS = [
+    "192.168.88.0/23",  # covers 192.168.88.0 - 192.168.89.255
+    "88.88.88.0/24",
+    "10.10.1.0/24",
+    "10.101.29.0/24",   # Docker internal bridge network
+    "192.168.70.0/24",
+    "172.19.176.0/24",
+    "192.168.90.0/24",
+    "192.168.92.0/24",
+    "192.168.96.0/22",  # covers 192.168.96.0 - 192.168.99.255
+    "192.168.112.0/22", # covers 192.168.112.0 - 192.168.115.255
+    "192.168.85.0/30",
+    "127.0.0.0/8",
+    "::1/128",
 ]
+
+ALLOWED_NETWORKS = []
+for net_str in DEFAULT_ALLOWED_NETWORKS:
+    try:
+        ALLOWED_NETWORKS.append(ipaddress.ip_network(net_str.strip()))
+    except ValueError:
+        pass
+
+extra_nets = os.environ.get("EXTRA_ALLOWED_NETWORKS", "")
+if extra_nets:
+    for item in extra_nets.split(","):
+        item = item.strip()
+        if item:
+            try:
+                net_obj = ipaddress.ip_network(item)
+                if net_obj not in ALLOWED_NETWORKS:
+                    ALLOWED_NETWORKS.append(net_obj)
+            except ValueError:
+                pass
 
 def is_ip_allowed(ip_str: str) -> bool:
     try:
