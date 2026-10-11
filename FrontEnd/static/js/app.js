@@ -194,6 +194,90 @@ function initVirtualLedStrip() {
 let animFrameId = null;
 let animStep = 0;
 
+function updateBulbLampVisualizer(rgbColor, glowColor, isOn, effectName) {
+    const bulbBtn = document.getElementById("ledBulbBtn");
+    const bulbSvg = document.getElementById("ledBulbIcon");
+    const bulbGlass = document.getElementById("bulbGlass");
+    const bulbFilament = document.getElementById("bulbFilament");
+    const bulbRays = document.getElementById("bulbRays");
+    const bulbBackdrop = document.getElementById("ledBulbGlowBackdrop");
+    const stateTitle = document.getElementById("ledBulbStateTitle");
+    const stateSub = document.getElementById("ledBulbStateSub");
+
+    if (!bulbBtn) return;
+
+    if (!isOn) {
+        bulbBtn.classList.remove("is-on");
+        bulbBtn.classList.add("is-off");
+        bulbBtn.style.borderColor = "rgba(255, 255, 255, 0.1)";
+        bulbBtn.style.boxShadow = "none";
+
+        if (bulbBackdrop) {
+            bulbBackdrop.style.backgroundColor = "transparent";
+            bulbBackdrop.style.boxShadow = "none";
+        }
+        if (bulbSvg) {
+            bulbSvg.style.color = "#4b5563";
+            bulbSvg.style.filter = "none";
+        }
+        if (bulbGlass) {
+            bulbGlass.style.fill = "transparent";
+            bulbGlass.style.stroke = "#4b5563";
+        }
+        if (bulbFilament) {
+            bulbFilament.style.stroke = "#374151";
+        }
+        if (bulbRays) {
+            bulbRays.style.opacity = "0";
+        }
+        if (stateTitle) {
+            stateTitle.textContent = "LIGHT OFF";
+            stateTitle.style.color = "#6b7280";
+        }
+        if (stateSub) {
+            stateSub.textContent = "TAP TO TURN ON";
+            stateSub.style.color = "#4b5563";
+        }
+        return;
+    }
+
+    bulbBtn.classList.remove("is-off");
+    bulbBtn.classList.add("is-on");
+    bulbBtn.style.borderColor = rgbColor;
+    bulbBtn.style.boxShadow = `0 0 16px ${glowColor}`;
+
+    if (bulbBackdrop) {
+        bulbBackdrop.style.backgroundColor = rgbColor;
+        bulbBackdrop.style.boxShadow = `0 0 24px ${glowColor}`;
+    }
+    if (bulbSvg) {
+        bulbSvg.style.color = rgbColor;
+        bulbSvg.style.filter = `drop-shadow(0 0 6px ${rgbColor})`;
+    }
+    if (bulbGlass) {
+        const fillTint = rgbColor.startsWith("hsl")
+            ? rgbColor.replace("hsl", "hsla").replace(")", ", 0.25)")
+            : rgbColor.replace("rgb", "rgba").replace(")", ", 0.25)");
+        bulbGlass.style.fill = fillTint;
+        bulbGlass.style.stroke = rgbColor;
+    }
+    if (bulbFilament) {
+        bulbFilament.style.stroke = "#ffffff";
+    }
+    if (bulbRays) {
+        bulbRays.style.opacity = "1";
+        bulbRays.style.stroke = rgbColor;
+    }
+    if (stateTitle) {
+        stateTitle.textContent = "LIGHT ON";
+        stateTitle.style.color = rgbColor;
+    }
+    if (stateSub) {
+        stateSub.textContent = effectName || "TAP TO TURN OFF";
+        stateSub.style.color = "rgba(255, 255, 255, 0.75)";
+    }
+}
+
 function updateLedVisualizer() {
     const nodes = document.querySelectorAll(".virtual-led-node");
     if (!nodes.length) return;
@@ -203,6 +287,7 @@ function updateLedVisualizer() {
             n.style.backgroundColor = "#111827";
             n.style.boxShadow = "none";
         });
+        updateBulbLampVisualizer("", "", false, "");
         return;
     }
 
@@ -217,6 +302,7 @@ function updateLedVisualizer() {
             n.style.backgroundColor = rgbStr;
             n.style.boxShadow = glowStr;
         });
+        updateBulbLampVisualizer(rgbStr, glowStr, true, "STATIC COLOR");
     } else if (effect === "rainbow") {
         animStep = (animStep + 2) % 360;
         nodes.forEach((n, i) => {
@@ -224,14 +310,20 @@ function updateLedVisualizer() {
             n.style.backgroundColor = `hsl(${hue}, 100%, ${Math.round(50 * brightFactor)}%)`;
             n.style.boxShadow = `0 0 8px hsl(${hue}, 100%, 50%)`;
         });
+        const activeHue = animStep;
+        const rainbowColor = `hsl(${activeHue}, 100%, ${Math.round(50 * brightFactor)}%)`;
+        const rainbowGlow = `rgba(${r}, ${g}, ${b}, ${brightFactor * 0.9})`;
+        updateBulbLampVisualizer(rainbowColor, rainbowGlow, true, "RAINBOW FX");
     } else if (effect === "breathing") {
         animStep = (animStep + 0.05) % (Math.PI * 2);
         const pulse = (Math.sin(animStep) + 1) / 2 * brightFactor;
         const rgbStr = `rgb(${Math.round(r * pulse)}, ${Math.round(g * pulse)}, ${Math.round(b * pulse)})`;
+        const glowStr = `0 0 10px rgba(${r}, ${g}, ${b}, ${pulse})`;
         nodes.forEach(n => {
             n.style.backgroundColor = rgbStr;
-            n.style.boxShadow = `0 0 10px rgba(${r}, ${g}, ${b}, ${pulse})`;
+            n.style.boxShadow = glowStr;
         });
+        updateBulbLampVisualizer(rgbStr, glowStr, true, "BREATHING FX");
     } else if (effect === "marquee") {
         animStep = (animStep + 1) % 6;
         nodes.forEach((n, i) => {
@@ -243,13 +335,19 @@ function updateLedVisualizer() {
                 n.style.boxShadow = "none";
             }
         });
+        const marqueeColor = `rgb(${Math.round(r * brightFactor)}, ${Math.round(g * brightFactor)}, ${Math.round(b * brightFactor)})`;
+        const marqueeGlow = `rgba(${r}, ${g}, ${b}, ${brightFactor * 0.8})`;
+        updateBulbLampVisualizer(marqueeColor, marqueeGlow, true, "MARQUEE FX");
     } else {
         // Fallback solid for other dynamic effects
         const rgbStr = `rgb(${Math.round(r * brightFactor)}, ${Math.round(g * brightFactor)}, ${Math.round(b * brightFactor)})`;
+        const glowStr = `0 0 8px rgba(${r}, ${g}, ${b}, ${brightFactor})`;
         nodes.forEach(n => {
             n.style.backgroundColor = rgbStr;
-            n.style.boxShadow = `0 0 8px rgba(${r}, ${g}, ${b}, ${brightFactor})`;
+            n.style.boxShadow = glowStr;
         });
+        const fxLabel = (effect || "DYNAMIC").replace(/_/g, " ").toUpperCase();
+        updateBulbLampVisualizer(rgbStr, glowStr, true, fxLabel);
     }
 }
 
@@ -628,14 +726,7 @@ function setMasterPower(on) {
         lastUserInteraction = Date.now();
         ledAutoOffHandled = false;
     }
-    const toggle = document.getElementById("masterPowerToggle");
-    if (toggle) toggle.checked = state.lights.power;
-    const btn = document.getElementById("masterPowerBtn");
-    if (btn) {
-        btn.classList.toggle("active", state.lights.power);
-        const txt = document.getElementById("masterPowerBtnText");
-        if (txt) txt.textContent = state.lights.power ? "POWER ON" : "POWER OFF";
-    }
+    updateLedVisualizer();
     const statusText = document.getElementById("powerStatusText");
     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
     saveConfig();
@@ -644,18 +735,10 @@ function setMasterPower(on) {
 }
 
 function setupLightListeners() {
-    // Master Power Switch and Button
-    const masterPower = document.getElementById("masterPowerToggle");
-    const masterBtn = document.getElementById("masterPowerBtn");
-    if (masterPower) {
-        masterPower.checked = state.lights.power;
-        masterPower.addEventListener("change", (e) => setMasterPower(e.target.checked));
-    }
-    if (masterBtn) {
-        masterBtn.classList.toggle("active", state.lights.power);
-        const txt = document.getElementById("masterPowerBtnText");
-        if (txt) txt.textContent = state.lights.power ? "POWER ON" : "POWER OFF";
-        masterBtn.addEventListener("click", () => setMasterPower(!state.lights.power));
+    // Illuminated Bulb Lamp Toggle Button
+    const bulbBtn = document.getElementById("ledBulbBtn");
+    if (bulbBtn) {
+        bulbBtn.addEventListener("click", () => setMasterPower(!state.lights.power));
     }
     const statusText = document.getElementById("powerStatusText");
     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
@@ -783,23 +866,158 @@ function setupLightListeners() {
 }
 
 
-// --- CAMERA CONTROLS ---
+// --- CAMERA CONTROLS & STREAM ENGINE (go2rtc WebRTC & MJPEG) ---
 
 let fpsFrames = 0;
 let lastFpsTime = performance.now();
 let lastStreamFrameTime = performance.now();
 let streamReconnectTimer = null;
+let chamberPeerConnection = null;
+let chamberStreamMode = localStorage.getItem("lumen_stream_mode") || "webrtc";
+let isWebRtcConnecting = false;
+
+function stopChamberStreams() {
+    if (chamberPeerConnection) {
+        try {
+            chamberPeerConnection.close();
+        } catch (_) { }
+        chamberPeerConnection = null;
+    }
+    const video = document.getElementById("chamberVideo");
+    if (video) {
+        video.srcObject = null;
+        video.removeAttribute("src");
+    }
+}
+
+async function startChamberStream() {
+    const video = document.getElementById("chamberVideo");
+    const img = document.getElementById("cameraStream");
+    if (!video || !img) return;
+
+    if (!state.camera.enabled) {
+        stopChamberStreams();
+        video.classList.add("hidden");
+        img.classList.add("hidden");
+        return;
+    }
+
+    if (chamberStreamMode === "mjpeg") {
+        stopChamberStreams();
+        video.classList.add("hidden");
+        img.classList.remove("hidden");
+        img.src = `/stream?t=${Date.now()}`;
+        return;
+    }
+
+    // WebRTC mode
+    if (isWebRtcConnecting) return;
+    isWebRtcConnecting = true;
+    stopChamberStreams();
+
+    try {
+        console.log("[Stream] Initiating go2rtc WebRTC connection...");
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: ["stun:stun.l.google.com:19302"] }
+            ]
+        });
+        chamberPeerConnection = pc;
+
+        pc.addTransceiver("video", { direction: "recvonly" });
+
+        pc.ontrack = (event) => {
+            console.log("[WebRTC] Received media track:", event.track.kind);
+            if (event.streams && event.streams[0]) {
+                video.srcObject = event.streams[0];
+            } else {
+                video.srcObject = new MediaStream([event.track]);
+            }
+            img.classList.add("hidden");
+            video.classList.remove("hidden");
+            video.play().catch(e => console.warn("[WebRTC] Autoplay waiting for user gesture:", e));
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            console.log("[WebRTC] ICE Connection State:", pc.iceConnectionState);
+            if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+                console.warn("[WebRTC] ICE disconnected, keeping MJPEG active...");
+                if (state.camera.enabled) {
+                    fallbackToMjpegStream();
+                }
+            }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Wait up to 300ms for STUN & host ICE candidates to gather
+        await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") {
+                resolve();
+            } else {
+                const checkState = () => {
+                    if (pc.iceGatheringState === "complete") {
+                        pc.removeEventListener("icegatheringstatechange", checkState);
+                        resolve();
+                    }
+                };
+                pc.addEventListener("icegatheringstatechange", checkState);
+                setTimeout(resolve, 300);
+            }
+        });
+
+        const res = await fetch("/api/webrtc", {
+            method: "POST",
+            headers: { "Content-Type": "application/sdp" },
+            body: pc.localDescription.sdp
+        });
+
+        if (!res.ok) {
+            throw new Error(`go2rtc proxy returned status ${res.status}`);
+        }
+
+        const answerSdp = await res.text();
+        if (!answerSdp || !answerSdp.includes("v=")) {
+            throw new Error("Invalid SDP answer received from go2rtc");
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription({
+            type: "answer",
+            sdp: answerSdp
+        }));
+
+        console.log("[WebRTC] WebRTC peer connected and streaming!");
+    } catch (err) {
+        console.warn("[WebRTC] WebRTC handshake failed, keeping MJPEG stream:", err);
+        fallbackToMjpegStream();
+    } finally {
+        isWebRtcConnecting = false;
+    }
+}
+
+function fallbackToMjpegStream() {
+    const video = document.getElementById("chamberVideo");
+    const img = document.getElementById("cameraStream");
+    if (!video || !img) return;
+
+    video.classList.add("hidden");
+    img.classList.remove("hidden");
+    if (!img.src || !img.src.includes("/stream")) {
+        img.src = `/stream?t=${Date.now()}`;
+    }
+}
 
 function reconnectCameraStream(immediate = false) {
-    const streamImg = document.getElementById("cameraStream");
-    if (!streamImg || !state.camera.enabled) return;
-
     if (streamReconnectTimer) clearTimeout(streamReconnectTimer);
     streamReconnectTimer = setTimeout(() => {
         if (state.camera.enabled) {
-            console.log("[Stream] Refreshing / reconnecting live camera MJPEG feed...");
-            lastStreamFrameTime = performance.now();
-            streamImg.src = `/stream?t=${Date.now()}`;
+            if (chamberStreamMode === "webrtc") {
+                startChamberStream();
+            } else {
+                const img = document.getElementById("cameraStream");
+                if (img) img.src = `/stream?t=${Date.now()}`;
+            }
         }
     }, immediate ? 50 : 500);
 }
@@ -807,9 +1025,9 @@ function reconnectCameraStream(immediate = false) {
 function initFpsCounter() {
     const fpsBadge = document.getElementById("liveFpsBadge");
     const streamImg = document.getElementById("cameraStream");
-    if (!streamImg) return;
+    const streamVideo = document.getElementById("chamberVideo");
 
-    streamImg.addEventListener("load", () => {
+    function onFrameReceived() {
         lastStreamFrameTime = performance.now();
         fpsFrames++;
         const now = performance.now();
@@ -820,44 +1038,67 @@ function initFpsCounter() {
             fpsFrames = 0;
             lastFpsTime = now;
         }
-    });
+    }
 
-    // Auto-reconnect on image network error or dropped connection
-    streamImg.addEventListener("error", () => {
-        if (state.camera.enabled) {
-            console.warn("[Stream] Image error event triggered, scheduling auto-reconnect...");
-            reconnectCameraStream(false);
+    if (streamImg) {
+        streamImg.addEventListener("load", onFrameReceived);
+        streamImg.addEventListener("error", () => {
+            if (state.camera.enabled && chamberStreamMode === "mjpeg") {
+                console.warn("[Stream] Image error event triggered, scheduling auto-reconnect...");
+                reconnectCameraStream(false);
+            }
+        });
+        streamImg.addEventListener("click", () => {
+            if (state.camera.enabled) reconnectCameraStream(true);
+        });
+    }
+
+    if (streamVideo) {
+        if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+            function frameCallback() {
+                if (streamVideo.videoWidth > 0 && !streamVideo.classList.contains("hidden")) {
+                    onFrameReceived();
+                }
+                streamVideo.requestVideoFrameCallback(frameCallback);
+            }
+            streamVideo.requestVideoFrameCallback(frameCallback);
+        } else {
+            streamVideo.addEventListener("timeupdate", onFrameReceived);
         }
-    });
 
-    // Watchdog: If no frames received for 4 seconds while enabled, automatically revive stream
+        streamVideo.addEventListener("click", () => {
+            if (state.camera.enabled) reconnectCameraStream(true);
+        });
+    }
+
+    // Watchdog: If no frames received for 5 seconds while enabled, auto-revive
     setInterval(() => {
-        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 4000)) {
-            console.warn("[Stream] Stream frame feed paused/stalled, auto-recovering...");
+        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 5000)) {
+            console.warn("[Stream] Stalled feed detected by watchdog, auto-reviving...");
             lastStreamFrameTime = performance.now();
             reconnectCameraStream(true);
         }
-    }, 2500);
-
-    // Tap stream to manually force-refresh if ever needed
-    streamImg.addEventListener("click", () => {
-        if (state.camera.enabled) {
-            reconnectCameraStream(true);
-        }
-    });
+    }, 3000);
 }
 
 function applyViewportTransforms() {
-    const stream = document.getElementById("cameraStream");
-    if (!stream) return;
+    const streamImg = document.getElementById("cameraStream");
+    const streamVideo = document.getElementById("chamberVideo");
 
     const scale = state.camera.digital_zoom;
     const scaleX = state.camera.flip_h ? -scale : scale;
     const scaleY = state.camera.flip_v ? -scale : scale;
-    stream.style.transform = `scale(${scaleX}, ${scaleY})`;
+    const transformStr = `scale(${scaleX}, ${scaleY})`;
 
     const { brightness, contrast, saturation } = state.camera.filters;
-    stream.style.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+    const filterStr = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+
+    [streamImg, streamVideo].forEach(el => {
+        if (el) {
+            el.style.transform = transformStr;
+            el.style.filter = filterStr;
+        }
+    });
 }
 
 // Available camera devices cache
@@ -992,12 +1233,18 @@ async function updateCameraSettings() {
         saveConfig();
         showToast(`Camera configured: ${w}x${h} @ ${state.camera.target_fps}fps`);
 
-        // Refresh camera stream element with a timestamp to force new resolution stream
-        const streamImg = document.getElementById("cameraStream");
-        if (streamImg) {
+        // Refresh camera stream
+        if (chamberStreamMode === "webrtc") {
             setTimeout(() => {
-                streamImg.src = `/stream?t=${Date.now()}`;
-            }, 350);
+                startChamberStream();
+            }, 600);
+        } else {
+            const streamImg = document.getElementById("cameraStream");
+            if (streamImg) {
+                setTimeout(() => {
+                    streamImg.src = `/stream?t=${Date.now()}`;
+                }, 350);
+            }
         }
     } catch (e) {
         console.error("Camera update failed:", e);
@@ -1077,6 +1324,7 @@ function setupCameraListeners() {
             if (span) span.textContent = state.camera.enabled ? "Disable Cam" : "Enable Cam";
         }
         updateSnapshotButtonState();
+        startChamberStream();
     }
 
     // Expose for pollSystemStatus
@@ -1111,13 +1359,20 @@ function setupCameraListeners() {
             btnToggle.style.opacity = "1";
         }
 
-        const streamImg = document.getElementById("cameraStream");
-        if (streamImg) {
-            setTimeout(() => {
-                streamImg.src = `/stream?t=${Date.now()}`;
-            }, 300);
-        }
+        reconnectCameraStream(true);
     });
+
+    // Stream Mode selector (WebRTC vs MJPEG)
+    const streamModeSelect = document.getElementById("streamModeSelect");
+    if (streamModeSelect) {
+        streamModeSelect.value = chamberStreamMode;
+        streamModeSelect.addEventListener("change", (e) => {
+            chamberStreamMode = e.target.value;
+            localStorage.setItem("lumen_stream_mode", chamberStreamMode);
+            showToast(`Stream engine set to: ${chamberStreamMode === "webrtc" ? "WebRTC / H.264" : "MJPEG"}`);
+            startChamberStream();
+        });
+    }
 
     // Resolution (Populated dynamically from connected camera hardware data)
     const resSelect = document.getElementById("resolutionSelect");
@@ -1510,14 +1765,7 @@ async function pollSystemStatus() {
             if (!initialLightsSynced && data.lights) {
                 if (data.lights.power !== undefined) {
                     state.lights.power = data.lights.power;
-                    const toggle = document.getElementById("masterPowerToggle");
-                    if (toggle) toggle.checked = state.lights.power;
-                    const btn = document.getElementById("masterPowerBtn");
-                    if (btn) {
-                        btn.classList.toggle("active", state.lights.power);
-                        const txt = document.getElementById("masterPowerBtnText");
-                        if (txt) txt.textContent = state.lights.power ? "POWER ON" : "POWER OFF";
-                    }
+                    updateLedVisualizer();
                     const statusText = document.getElementById("powerStatusText");
                     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
                 }
@@ -1816,7 +2064,7 @@ async function loadOcrProjects() {
     try {
         const res = await fetch("/api/ocr/projects");
         const data = await res.json();
-        ocrStudioState.projects = Array.isArray(data) ? data : [];
+        ocrStudioState.projects = Array.isArray(data) ? data : (data.projects || []);
 
         // Restore active project from storage or default to first project
         const savedActiveId = localStorage.getItem("lumen_active_ocr_project");
@@ -1957,8 +2205,9 @@ async function selectActiveProject(projectId, notify = true) {
     try {
         const res = await fetch(`/api/ocr/projects/${projectId}`);
         const data = await res.json();
-        ocrStudioState.activeProject = data;
-        ocrStudioState.boxes = Array.isArray(data.boxes) ? data.boxes : [];
+        const projData = data.project || data;
+        ocrStudioState.activeProject = projData;
+        ocrStudioState.boxes = Array.isArray(projData.boxes) ? projData.boxes : [];
 
         // If newly created project has no boxes yet, generate starter template:
         // 4 digital thermo boxes on Chamber, 1 standard thermo box on Device
@@ -2015,7 +2264,18 @@ async function handleCreateNewProjectSubmit() {
     const name = (input?.value || "").trim();
     if (!name) {
         if (errorMsg) {
-            errorMsg.textContent = "Please provide a project name (e.g. 'PT.abc' or 'Project01').";
+            errorMsg.textContent = "Please provide a project name (e.g. 'Project01' or 'PT_abc').";
+            errorMsg.classList.add("visible");
+        }
+        input?.focus();
+        return;
+    }
+
+    // Check for banned directory characters
+    const BANNED_CHARS = /[<>:"/\\|?*]/;
+    if (BANNED_CHARS.test(name) || name.startsWith(".") || name.endsWith(".") || name.includes("..")) {
+        if (errorMsg) {
+            errorMsg.textContent = 'Project name contains forbidden characters (< > : " / \\ | ? * or leading/trailing dots). Please use letters, numbers, spaces, underscores, or hyphens.';
             errorMsg.classList.add("visible");
         }
         input?.focus();
@@ -2046,7 +2306,7 @@ async function handleCreateNewProjectSubmit() {
             if (createdItem) createdItem.classList.add("open");
         } else {
             if (errorMsg) {
-                errorMsg.textContent = data.error || "Failed to create project.";
+                errorMsg.textContent = data.detail || data.error || data.message || "Failed to create project.";
                 errorMsg.classList.add("visible");
             }
         }
@@ -2326,14 +2586,19 @@ async function autoDetectDisplays() {
 
     // Capture current frame from chamber stream or device video
     const canvas = document.createElement("canvas");
-    const chamberImg = document.getElementById("chamberStream");
+    const chamberImg = document.getElementById("cameraStream");
+    const chamberVideo = document.getElementById("chamberVideo");
     const deviceVideo = document.getElementById("deviceCameraVideo");
 
     let sourceW = 1280;
     let sourceH = 720;
     let ctx = canvas.getContext("2d");
 
-    if (chamberImg && chamberImg.complete && chamberImg.naturalWidth > 0) {
+    if (chamberVideo && chamberVideo.videoWidth > 0 && !chamberVideo.classList.contains("hidden")) {
+        canvas.width = chamberVideo.videoWidth;
+        canvas.height = chamberVideo.videoHeight;
+        ctx.drawImage(chamberVideo, 0, 0, canvas.width, canvas.height);
+    } else if (chamberImg && chamberImg.complete && chamberImg.naturalWidth > 0 && !chamberImg.classList.contains("hidden")) {
         canvas.width = chamberImg.naturalWidth || 1280;
         canvas.height = chamberImg.naturalHeight || 720;
         ctx.drawImage(chamberImg, 0, 0, canvas.width, canvas.height);
@@ -3560,7 +3825,10 @@ async function captureMultiCameraSnapshot() {
 
             if (!imgChamber) {
                 const streamImg = document.getElementById("cameraStream");
-                if (streamImg && streamImg.naturalWidth) {
+                const chamberVideo = document.getElementById("chamberVideo");
+                if (chamberVideo && chamberVideo.videoWidth > 0 && !chamberVideo.classList.contains("hidden")) {
+                    imgChamber = chamberVideo;
+                } else if (streamImg && streamImg.naturalWidth) {
                     imgChamber = streamImg;
                 }
             }
@@ -3608,8 +3876,8 @@ async function captureMultiCameraSnapshot() {
             const z1 = state.camera.digital_zoom || 1.0;
             ctx.scale(z1, z1);
             ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
-            const w1 = imgChamber.naturalWidth || imgChamber.width;
-            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            const w1 = imgChamber.videoWidth || imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.videoHeight || imgChamber.naturalHeight || imgChamber.height;
             const coverScale1 = Math.max(slotW / w1, slotH / h1);
             const drawW1 = w1 * coverScale1;
             const drawH1 = h1 * coverScale1;
@@ -3694,8 +3962,8 @@ async function captureMultiCameraSnapshot() {
             const z = state.camera.digital_zoom || 1.0;
             ctx.scale(z, z);
             ctx.filter = `brightness(${state.camera.filters.brightness}%) contrast(${state.camera.filters.contrast}%) saturate(${state.camera.filters.saturation}%)`;
-            const w1 = imgChamber.naturalWidth || imgChamber.width;
-            const h1 = imgChamber.naturalHeight || imgChamber.height;
+            const w1 = imgChamber.videoWidth || imgChamber.naturalWidth || imgChamber.width;
+            const h1 = imgChamber.videoHeight || imgChamber.naturalHeight || imgChamber.height;
             const coverScale1 = Math.max(slotW / w1, slotH / h1);
             const drawW1 = w1 * coverScale1;
             const drawH1 = h1 * coverScale1;

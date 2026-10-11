@@ -235,11 +235,16 @@ class APIHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
+            self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
 
             try:
+                last_touch = 0.0
                 for chunk in cam_mgr.generate_mjpeg_stream():
-                    touch_client_activity()
+                    now = time.time()
+                    if now - last_touch > 3.0:
+                        last_touch = now
+                        touch_client_activity()
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):

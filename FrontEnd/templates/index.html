@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=5.2">
+    <link rel="stylesheet" href="/static/css/main.css?v=5.4">
 </head>
 
 <body>
@@ -135,7 +135,8 @@
 
                     <!-- Viewport Screen -->
                     <div class="viewport-card" id="viewportCard">
-                        <img id="cameraStream" class="viewport-stream" src="/stream" alt="Live Camera Stream">
+                        <video id="chamberVideo" class="viewport-stream" autoplay playsinline muted></video>
+                        <img id="cameraStream" class="viewport-stream hidden" src="/stream" alt="Live Camera Stream">
                         <!-- Interactive ROI Bounding Boxes Layer (Chamber Camera) -->
                         <div class="roi-overlay-layer" id="roiOverlayChamber"></div>
 
@@ -655,11 +656,24 @@
                                         </div>
 
                                         <div class="field-group">
+                                            <label class="field-label" for="streamModeSelect">Stream Engine /
+                                                Protocol</label>
+                                            <select id="streamModeSelect" class="select-custom">
+                                                <option value="webrtc" selected>WebRTC / H.264 (Low Bandwidth & Latency)
+                                                </option>
+                                                <option value="mjpeg">MJPEG (Legacy Raw Stream)</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="field-group">
                                             <div
                                                 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
-                                                <label class="field-label" for="resolutionSelect" style="margin: 0;">Stream Resolution</label>
-                                                <button type="button" class="btn-setting-reset" data-target="resolutionSelect"
-                                                    data-default="{{ app_defaults.default_resolution }}" title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
+                                                <label class="field-label" for="resolutionSelect"
+                                                    style="margin: 0;">Stream Resolution</label>
+                                                <button type="button" class="btn-setting-reset"
+                                                    data-target="resolutionSelect"
+                                                    data-default="{{ app_defaults.default_resolution }}"
+                                                    title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
                                                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
                                                         stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
                                                         stroke-linejoin="round">
@@ -853,9 +867,11 @@
                                 <div class="field-group" style="margin-bottom: 12px;">
                                     <div
                                         style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                        <label class="field-label" for="deviceResSelect" style="margin: 0;">Resolution Target</label>
+                                        <label class="field-label" for="deviceResSelect" style="margin: 0;">Resolution
+                                            Target</label>
                                         <button type="button" class="btn-setting-reset" data-target="deviceResSelect"
-                                            data-default="{{ app_defaults.default_resolution }}" title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
+                                            data-default="{{ app_defaults.default_resolution }}"
+                                            title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
                                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
                                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
                                                 stroke-linejoin="round">
@@ -1157,338 +1173,377 @@
 
         <!-- RIGHT COLUMN: WS2812B Light Studio & OCR Calibration Studio -->
         <div class="dashboard-controls-col" id="dashboardControlsCol">
-            <section class="glass-panel lights-panel {% if request.query_params.get('open_led') %}mobile-open{% endif %}"
+            <section
+                class="glass-panel lights-panel {% if request.query_params.get('open_led') %}mobile-open{% endif %}"
                 id="lightsPanel">
-            <div class="panel-header">
-                <h2 class="panel-title">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
-                    </svg>
-                    WS2812B Light Studio
-                </h2>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span class="field-val-badge" id="powerStatusText">STRIP ACTIVE</span>
-                    <button type="button" class="btn-panel-close-mobile" id="btnCloseLedPanel"
-                        title="Close LED Controls">✕</button>
-                </div>
-            </div>
-
-            <!-- Mobile Drawer System Status Strip (Only visible in mobile slide-out drawer) -->
-            <div class="mobile-drawer-stats">
-                <div class="drawer-stat-item" title="CPU Load">
-                    <span>CPU:</span>
-                    <strong id="statCpuDrawer">0.15</strong>
-                </div>
-                <div class="drawer-stat-item" title="Core Temp">
-                    <span>Temp:</span>
-                    <strong id="statTempDrawer">--°C</strong>
-                </div>
-                <div class="drawer-stat-item" title="Available RAM">
-                    <span>RAM:</span>
-                    <strong id="statRamDrawer">-- MB</strong>
-                </div>
-                <div class="drawer-stat-item" title="Sleep Timer">
-                    <span>Sleep:</span>
-                    <strong id="statIdleTimerDrawer">10:00</strong>
-                </div>
-                <button type="button" class="drawer-reset-btn" id="btnResetAllDefaultsMobile"
-                    title="Reset all settings to server defaults">Reset</button>
-                <a href="/logout" class="drawer-logout-btn" title="Sign out">Logout</a>
-            </div>
-
-            <!-- Master Power Switch Card -->
-            <div class="led-master-card">
-                <div>
-                    <h3 style="font-size: 0.95rem; font-weight: 600;">NeoPixel Master Power</h3>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary);">Direct PWM GPIO 18 Hardware Control</p>
-                </div>
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <button type="button" class="btn-power-toggle" id="masterPowerBtn">
-                        <span class="power-dot"></span>
-                        <span id="masterPowerBtnText">POWER OFF</span>
-                    </button>
-                    <label class="switch-toggle" id="masterPowerLabel">
-                        <input type="checkbox" id="masterPowerToggle">
-                        <span class="switch-slider"></span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Real-time Virtual LED Strip Simulator (Clean fit without horizontal scrollbar) -->
-            <div class="led-strip-preview-wrapper">
-                <div class="led-strip-title">
-                    <span>Virtual Strip Simulator</span>
-                    <span id="colorHexDisplay">#FFFFFF</span>
-                </div>
-                <div class="virtual-led-strip" id="virtualLedStrip">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
-
-            <!-- Combined Color Control: Presets (Left: White, Warm, Yellow | Right: Red, Green, Blue) + Radiant Color Wheel (Center) -->
-            <div class="color-wheel-card combined-color-card">
-                <div class="color-wheel-header">
-                    <span class="color-wheel-title">Precise Color Studio</span>
-                    <div class="wheel-hex-input-wrapper" id="wheelHexWrapper" title="Click to type Hex (e.g. 00CC00)">
-                        <span class="wheel-hex-hash">#</span>
-                        <input type="text" id="wheelHexBadge" class="wheel-hex-badge-input" value="FFFFFF" maxlength="6"
-                            spellcheck="false" autocomplete="off" placeholder="FFFFFF">
-                    </div>
-                </div>
-
-                <div class="color-picker-composite-row">
-                    <!-- Left Column: White, Warm, Yellow -->
-                    <div class="preset-column preset-col-left">
-                        <button class="btn-preset active" id="presetWhite" type="button" title="Cool White">
-                            <span class="preset-swatch"
-                                style="background-color: #ffffff; box-shadow: 0 0 6px #ffffff;"></span>
-                            <span>White</span>
-                        </button>
-                        <button class="btn-preset" id="presetWarmWhite" type="button" title="Warm White (3000K)">
-                            <span class="preset-swatch"
-                                style="background-color: #ffd6a4; box-shadow: 0 0 6px #ffd6a4;"></span>
-                            <span>Warm</span>
-                        </button>
-                        <button class="btn-preset" id="presetYellow" type="button" title="Pure Yellow">
-                            <span class="preset-swatch"
-                                style="background-color: #ffea00; box-shadow: 0 0 6px #ffea00;"></span>
-                            <span>Yellow</span>
-                        </button>
-                    </div>
-
-                    <!-- Center: Radiant Color Wheel -->
-                    <div class="color-wheel-canvas-container">
-                        <canvas id="reinventedColorWheel" width="150" height="150"></canvas>
-                    </div>
-
-                    <!-- Right Column: Red, Green, Blue -->
-                    <div class="preset-column preset-col-right">
-                        <button class="btn-preset" id="presetRed" type="button" title="Pure Red">
-                            <span class="preset-swatch"
-                                style="background-color: #ef4444; box-shadow: 0 0 6px #ef4444;"></span>
-                            <span>Red</span>
-                        </button>
-                        <button class="btn-preset" id="presetGreen" type="button" title="Pure Green">
-                            <span class="preset-swatch"
-                                style="background-color: #10b981; box-shadow: 0 0 6px #10b981;"></span>
-                            <span>Green</span>
-                        </button>
-                        <button class="btn-preset" id="presetBlue" type="button" title="Pure Blue">
-                            <span class="preset-swatch"
-                                style="background-color: #3b82f6; box-shadow: 0 0 6px #3b82f6;"></span>
-                            <span>Blue</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="wheel-values-row">
-                    <span id="wheelHsvDisplay">H: 0° S: 0% V: 100%</span>
-                    <span id="wheelRgbDisplay">RGB(255, 255, 255)</span>
-                </div>
-            </div>
-
-            <!-- Master Brightness Slider (Default 45%) -->
-            <div class="field-group" style="margin-bottom: 0.4rem;">
-                <label class="field-label" for="brightnessSlider">
-                    Strip Brightness
-                    <span class="field-val-badge" id="brightnessValBadge">45%</span>
-                </label>
-                <input type="range" id="brightnessSlider" class="slider-custom" min="0" max="100" value="45">
-            </div>
-
-            <!-- Custom RGB Channels & Numbers -->
-            <div class="field-group" style="margin-bottom: 0.5rem;">
-                <label class="field-label">Custom RGB Channels (0 - 255)</label>
-            </div>
-            <div class="rgb-channels-grid">
-                <!-- Red -->
-                <div class="rgb-box red-border">
-                    <div class="rgb-box-header">
-                        <span class="rgb-title" style="color: var(--neon-red);">RED</span>
-                        <input type="number" id="inputRed" class="rgb-input-number" min="0" max="255" value="255">
-                    </div>
-                    <input type="range" id="sliderRed" class="slider-custom" min="0" max="255" value="255">
-                </div>
-
-                <!-- Green -->
-                <div class="rgb-box green-border">
-                    <div class="rgb-box-header">
-                        <span class="rgb-title" style="color: var(--neon-green);">GREEN</span>
-                        <input type="number" id="inputGreen" class="rgb-input-number" min="0" max="255" value="255">
-                    </div>
-                    <input type="range" id="sliderGreen" class="slider-custom" min="0" max="255" value="255">
-                </div>
-
-                <!-- Blue -->
-                <div class="rgb-box blue-border">
-                    <div class="rgb-box-header">
-                        <span class="rgb-title" style="color: var(--neon-blue);">BLUE</span>
-                        <input type="number" id="inputBlue" class="rgb-input-number" min="0" max="255" value="255">
-                    </div>
-                    <input type="range" id="sliderBlue" class="slider-custom" min="0" max="255" value="255">
-                </div>
-            </div>
-
-            <!-- Dynamic Effects (Full 56 WS2812FX Suite) & Speed Grid -->
-            <div class="fx-controls-grid">
-                <div class="field-group">
-                    <label class="field-label" for="effectSelect">
-                        Lighting Effect (56 FX)
-                    </label>
-                    <select id="effectSelect" class="select-custom">
-                        <option value="static" selected>1. Static (Solid Color - Default)</option>
-                        <option value="blink">2. Blink</option>
-                        <option value="breath">3. Breath / Breathing</option>
-                        <option value="color_wipe">4. Color Wipe</option>
-                        <option value="color_wipe_random">5. Color Wipe Random</option>
-                        <option value="random_color">6. Random Color</option>
-                        <option value="single_dynamic">7. Single Dynamic</option>
-                        <option value="multi_dynamic">8. Multi Dynamic</option>
-                        <option value="rainbow">9. Rainbow</option>
-                        <option value="rainbow_cycle">10. Rainbow Cycle</option>
-                        <option value="scan">11. Scan</option>
-                        <option value="dual_scan">12. Dual Scan</option>
-                        <option value="fade">13. Fade</option>
-                        <option value="theater_chase">14. Theater Chase</option>
-                        <option value="theater_chase_rainbow">15. Theater Chase Rainbow</option>
-                        <option value="running_lights">16. Running Lights</option>
-                        <option value="twinkle">17. Twinkle</option>
-                        <option value="twinkle_random">18. Twinkle Random</option>
-                        <option value="twinkle_fade">19. Twinkle Fade</option>
-                        <option value="twinkle_fade_random">20. Twinkle Fade Random</option>
-                        <option value="sparkle">21. Sparkle</option>
-                        <option value="flash_sparkle">22. Flash Sparkle</option>
-                        <option value="hyper_sparkle">23. Hyper Sparkle</option>
-                        <option value="strobe">24. Strobe</option>
-                        <option value="strobe_rainbow">25. Strobe Rainbow</option>
-                        <option value="multi_strobe">26. Multi Strobe</option>
-                        <option value="blink_rainbow">27. Blink Rainbow</option>
-                        <option value="chase_white">28. Chase White</option>
-                        <option value="chase_color">29. Chase Color</option>
-                        <option value="chase_random">30. Chase Random</option>
-                        <option value="chase_rainbow">31. Chase Rainbow</option>
-                        <option value="chase_flash">32. Chase Flash</option>
-                        <option value="chase_flash_random">33. Chase Flash Random</option>
-                        <option value="chase_rainbow_white">34. Chase Rainbow White</option>
-                        <option value="chase_blackout">35. Chase Blackout</option>
-                        <option value="chase_blackout_rainbow">36. Chase Blackout Rainbow</option>
-                        <option value="color_sweep_random">37. Color Sweep Random</option>
-                        <option value="running_color">38. Running Color</option>
-                        <option value="running_red_blue">39. Running Red Blue</option>
-                        <option value="running_random">40. Running Random</option>
-                        <option value="larson_scanner">41. Larson Scanner (Cylon)</option>
-                        <option value="comet">42. Comet</option>
-                        <option value="fireworks">43. Fireworks</option>
-                        <option value="fireworks_random">44. Fireworks Random</option>
-                        <option value="merry_christmas">45. Merry Christmas</option>
-                        <option value="fire_flicker">46. Fire Flicker</option>
-                        <option value="fire_soft">47. Fire Soft</option>
-                        <option value="dual_color_wave">48. Dual Color Wave</option>
-                        <option value="circulating">49. Circulating</option>
-                        <option value="tricolor_wipe">50. Tricolor Wipe</option>
-                        <option value="icu">51. ICU</option>
-                        <option value="multi_comet">52. Multi Comet</option>
-                        <option value="dual_larson_scanner">53. Dual Larson Scanner</option>
-                        <option value="random_chase">54. Random Chase</option>
-                        <option value="oscillate">55. Oscillate</option>
-                        <option value="pride_2015">56. Pride 2015</option>
-                    </select>
-                </div>
-
-                <div class="field-group">
-                    <label class="field-label" for="speedSlider">
-                        FX Speed
-                        <span class="field-val-badge" id="speedValBadge">50 ms</span>
-                    </label>
-                    <input type="range" id="speedSlider" class="slider-custom" min="15" max="2000" step="5" value="60">
-                </div>
-            </div>
-        </section>
-
-        <!-- OCR Calibration Studio & Projects Panel (Spawned below Lights Panel upon unlock) -->
-        <section class="glass-panel ocr-projects-panel hidden" id="ocrProjectsPanel">
-            <div class="panel-header">
-                <div class="panel-title-wrap">
-                    <div class="panel-icon-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-2h6v2zm4-4H6v-2h10v2zm0-4H6V7h10v2z"/>
+                <div class="panel-header">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24">
+                            <path
+                                d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
                         </svg>
-                    </div>
-                    <div>
-                        <h2 class="panel-title">OCR Calibration Studio</h2>
-                        <p class="panel-subtitle">Multi-thermometer display detection, interactive bounding boxes & Excel export</p>
+                        WS2812B Light Studio
+                    </h2>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="field-val-badge" id="powerStatusText">STRIP ACTIVE</span>
+                        <button type="button" class="btn-panel-close-mobile" id="btnCloseLedPanel"
+                            title="Close LED Controls">✕</button>
                     </div>
                 </div>
-                <div class="ocr-header-actions" style="display: flex; gap: 8px; align-items: center;">
-                    <button type="button" class="btn-panel-action btn-add-project" id="btnCreateProjectPrompt" title="Create New Project">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                        </svg>
-                        <span>+ New Project</span>
-                    </button>
-                    <button class="panel-collapse-btn" id="collapseOcrPanel" type="button" title="Toggle Projects Panel">
-                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
-                        </svg>
-                    </button>
-                </div>
-            </div>
 
-            <div class="panel-content ocr-panel-content" id="ocrPanelContent">
-                <!-- Active Project Banner & ROI Toolbar -->
-                <div class="ocr-toolbar-card">
-                    <div class="ocr-active-project-bar">
-                        <div class="active-proj-info">
-                            <span class="active-proj-label">Active Project:</span>
-                            <span class="active-proj-name" id="currentActiveProjectName">None (Select radio below)</span>
-                        </div>
-                        <div class="ocr-roi-quick-actions">
-                            <button type="button" class="btn-roi-tool" id="btnAutoDetectRoi" title="Auto-detect digital thermometers in chamber/device frame">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                <!-- Mobile Drawer System Status Strip (Only visible in mobile slide-out drawer) -->
+                <div class="mobile-drawer-stats">
+                    <div class="drawer-stat-item" title="CPU Load">
+                        <span>CPU:</span>
+                        <strong id="statCpuDrawer">0.15</strong>
+                    </div>
+                    <div class="drawer-stat-item" title="Core Temp">
+                        <span>Temp:</span>
+                        <strong id="statTempDrawer">--°C</strong>
+                    </div>
+                    <div class="drawer-stat-item" title="Available RAM">
+                        <span>RAM:</span>
+                        <strong id="statRamDrawer">-- MB</strong>
+                    </div>
+                    <div class="drawer-stat-item" title="Sleep Timer">
+                        <span>Sleep:</span>
+                        <strong id="statIdleTimerDrawer">10:00</strong>
+                    </div>
+                    <button type="button" class="drawer-reset-btn" id="btnResetAllDefaultsMobile"
+                        title="Reset all settings to server defaults">Reset</button>
+                    <a href="/logout" class="drawer-logout-btn" title="Sign out">Logout</a>
+                </div>
+
+                <!-- Master Power Switch Card with Illuminated Line Bulb SVG -->
+                <div class="led-master-card">
+                    <div class="led-master-meta">
+                        <h3 class="led-master-title">NeoPixel Light Master</h3>
+                        <p class="led-master-subtitle">Direct PWM GPIO 18 Hardware Control</p>
+                    </div>
+                    <div class="led-master-action">
+                        <button type="button" class="btn-led-bulb is-off" id="ledBulbBtn"
+                            title="Click to Toggle Light Power" aria-label="Toggle NeoPixel Light">
+                            <div class="led-bulb-glow-backdrop" id="ledBulbGlowBackdrop"></div>
+                            <div class="led-bulb-icon-box">
+                                <svg class="led-bulb-icon" id="ledBulbIcon" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <!-- Radiant light rays / aura -->
+                                    <g class="bulb-rays" id="bulbRays">
+                                        <line x1="12" y1="1" x2="12" y2="3.5" />
+                                        <line x1="4.22" y1="4.22" x2="5.99" y2="5.99" />
+                                        <line x1="1" y1="12" x2="3.5" y2="12" />
+                                        <line x1="19.78" y1="4.22" x2="18.01" y2="5.99" />
+                                        <line x1="23" y1="12" x2="20.5" y2="12" />
+                                    </g>
+                                    <!-- Bulb glass envelope -->
+                                    <path class="bulb-glass" id="bulbGlass"
+                                        d="M9 18h6a1 1 0 0 0 1-1c0-1.88 1.25-3.08 2.22-4.14A7 7 0 1 0 5.78 12.86C6.75 13.92 8 15.12 8 17a1 1 0 0 0 1 1z" />
+                                    <!-- Internal glowing filament -->
+                                    <path class="bulb-filament" id="bulbFilament" d="M10 13l2-3 2 3" />
+                                    <!-- Threaded screw base -->
+                                    <line class="bulb-base" x1="10" y1="21" x2="14" y2="21" />
+                                    <line class="bulb-base" x1="11" y1="23.5" x2="13" y2="23.5" />
                                 </svg>
-                                <span>Auto-Detect</span>
-                            </button>
-                            <button type="button" class="btn-roi-tool" id="btnAddChamberBox" title="Add manual ROI bounding box to Raspberry Pi Chamber">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                                </svg>
-                                <span>+ Box Chamber</span>
-                            </button>
-                            <button type="button" class="btn-roi-tool" id="btnAddDeviceBox" title="Add manual ROI bounding box to Device Camera (Standard)">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                                </svg>
-                                <span>+ Box Standard</span>
-                            </button>
-                            <button type="button" class="btn-roi-tool btn-roi-clear" id="btnClearAllBoxes" title="Clear bounding boxes for active project">
-                                <span>Clear Boxes</span>
-                            </button>
-                        </div>
-                    </div>
-                    <!-- Non-Digital / Unsupported Instrument Warning Banner -->
-                    <div id="ocrAnalogWarningBanner" class="ocr-analog-warning hidden">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
-                        </svg>
-                        <div class="ocr-warning-content">
-                            <strong id="ocrWarningTitle">Unsupported Non-Digital Instrument:</strong>
-                            <span id="ocrAnalogWarningText">Only digital thermometers with active numeric displays (LCD/VFD/LED) are supported. Mercury-in-glass, analog dials, and plastic strips are not supported.</span>
-                        </div>
+                            </div>
+                            <div class="led-bulb-text-box">
+                                <span class="led-bulb-state-title" id="ledBulbStateTitle">LIGHT OFF</span>
+                                <span class="led-bulb-state-sub" id="ledBulbStateSub">TAP TO TURN ON</span>
+                            </div>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Projects List Header & Scrollable List -->
-                <div class="projects-list-container">
-                    <div class="projects-list-scrollable" id="projectsListScrollable">
-                        <div class="projects-empty-state" id="projectsEmptyState">
-                            <p>No calibration projects created yet. Click <strong>+ New Project</strong> above to create one (e.g. "PT.abc" or "Project01").</p>
+                <!-- Real-time Virtual LED Strip Simulator (Clean fit without horizontal scrollbar) -->
+                <div class="led-strip-preview-wrapper">
+                    <div class="led-strip-title">
+                        <span>Virtual Strip Simulator</span>
+                        <span id="colorHexDisplay">#FFFFFF</span>
+                    </div>
+                    <div class="virtual-led-strip" id="virtualLedStrip">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Combined Color Control: Presets (Left: White, Warm, Yellow | Right: Red, Green, Blue) + Radiant Color Wheel (Center) -->
+                <div class="color-wheel-card combined-color-card">
+                    <div class="color-wheel-header">
+                        <span class="color-wheel-title">Precise Color Studio</span>
+                        <div class="wheel-hex-input-wrapper" id="wheelHexWrapper"
+                            title="Click to type Hex (e.g. 00CC00)">
+                            <span class="wheel-hex-hash">#</span>
+                            <input type="text" id="wheelHexBadge" class="wheel-hex-badge-input" value="FFFFFF"
+                                maxlength="6" spellcheck="false" autocomplete="off" placeholder="FFFFFF">
+                        </div>
+                    </div>
+
+                    <div class="color-picker-composite-row">
+                        <!-- Left Column: White, Warm, Yellow -->
+                        <div class="preset-column preset-col-left">
+                            <button class="btn-preset active" id="presetWhite" type="button" title="Cool White">
+                                <span class="preset-swatch"
+                                    style="background-color: #ffffff; box-shadow: 0 0 6px #ffffff;"></span>
+                                <span>White</span>
+                            </button>
+                            <button class="btn-preset" id="presetWarmWhite" type="button" title="Warm White (3000K)">
+                                <span class="preset-swatch"
+                                    style="background-color: #ffd6a4; box-shadow: 0 0 6px #ffd6a4;"></span>
+                                <span>Warm</span>
+                            </button>
+                            <button class="btn-preset" id="presetYellow" type="button" title="Pure Yellow">
+                                <span class="preset-swatch"
+                                    style="background-color: #ffea00; box-shadow: 0 0 6px #ffea00;"></span>
+                                <span>Yellow</span>
+                            </button>
+                        </div>
+
+                        <!-- Center: Radiant Color Wheel -->
+                        <div class="color-wheel-canvas-container">
+                            <canvas id="reinventedColorWheel" width="150" height="150"></canvas>
+                        </div>
+
+                        <!-- Right Column: Red, Green, Blue -->
+                        <div class="preset-column preset-col-right">
+                            <button class="btn-preset" id="presetRed" type="button" title="Pure Red">
+                                <span class="preset-swatch"
+                                    style="background-color: #ef4444; box-shadow: 0 0 6px #ef4444;"></span>
+                                <span>Red</span>
+                            </button>
+                            <button class="btn-preset" id="presetGreen" type="button" title="Pure Green">
+                                <span class="preset-swatch"
+                                    style="background-color: #10b981; box-shadow: 0 0 6px #10b981;"></span>
+                                <span>Green</span>
+                            </button>
+                            <button class="btn-preset" id="presetBlue" type="button" title="Pure Blue">
+                                <span class="preset-swatch"
+                                    style="background-color: #3b82f6; box-shadow: 0 0 6px #3b82f6;"></span>
+                                <span>Blue</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="wheel-values-row">
+                        <span id="wheelHsvDisplay">H: 0° S: 0% V: 100%</span>
+                        <span id="wheelRgbDisplay">RGB(255, 255, 255)</span>
+                    </div>
+                </div>
+
+                <!-- Master Brightness Slider (Default 45%) -->
+                <div class="field-group" style="margin-bottom: 0.4rem;">
+                    <label class="field-label" for="brightnessSlider">
+                        Strip Brightness
+                        <span class="field-val-badge" id="brightnessValBadge">45%</span>
+                    </label>
+                    <input type="range" id="brightnessSlider" class="slider-custom" min="0" max="100" value="45">
+                </div>
+
+                <!-- Custom RGB Channels & Numbers -->
+                <div class="field-group" style="margin-bottom: 0.5rem;">
+                    <label class="field-label">Custom RGB Channels (0 - 255)</label>
+                </div>
+                <div class="rgb-channels-grid">
+                    <!-- Red -->
+                    <div class="rgb-box red-border">
+                        <div class="rgb-box-header">
+                            <span class="rgb-title" style="color: var(--neon-red);">RED</span>
+                            <input type="number" id="inputRed" class="rgb-input-number" min="0" max="255" value="255">
+                        </div>
+                        <input type="range" id="sliderRed" class="slider-custom" min="0" max="255" value="255">
+                    </div>
+
+                    <!-- Green -->
+                    <div class="rgb-box green-border">
+                        <div class="rgb-box-header">
+                            <span class="rgb-title" style="color: var(--neon-green);">GREEN</span>
+                            <input type="number" id="inputGreen" class="rgb-input-number" min="0" max="255" value="255">
+                        </div>
+                        <input type="range" id="sliderGreen" class="slider-custom" min="0" max="255" value="255">
+                    </div>
+
+                    <!-- Blue -->
+                    <div class="rgb-box blue-border">
+                        <div class="rgb-box-header">
+                            <span class="rgb-title" style="color: var(--neon-blue);">BLUE</span>
+                            <input type="number" id="inputBlue" class="rgb-input-number" min="0" max="255" value="255">
+                        </div>
+                        <input type="range" id="sliderBlue" class="slider-custom" min="0" max="255" value="255">
+                    </div>
+                </div>
+
+                <!-- Dynamic Effects (Full 56 WS2812FX Suite) & Speed Grid -->
+                <div class="fx-controls-grid">
+                    <div class="field-group">
+                        <label class="field-label" for="effectSelect">
+                            Lighting Effect (56 FX)
+                        </label>
+                        <select id="effectSelect" class="select-custom">
+                            <option value="static" selected>1. Static (Solid Color - Default)</option>
+                            <option value="blink">2. Blink</option>
+                            <option value="breath">3. Breath / Breathing</option>
+                            <option value="color_wipe">4. Color Wipe</option>
+                            <option value="color_wipe_random">5. Color Wipe Random</option>
+                            <option value="random_color">6. Random Color</option>
+                            <option value="single_dynamic">7. Single Dynamic</option>
+                            <option value="multi_dynamic">8. Multi Dynamic</option>
+                            <option value="rainbow">9. Rainbow</option>
+                            <option value="rainbow_cycle">10. Rainbow Cycle</option>
+                            <option value="scan">11. Scan</option>
+                            <option value="dual_scan">12. Dual Scan</option>
+                            <option value="fade">13. Fade</option>
+                            <option value="theater_chase">14. Theater Chase</option>
+                            <option value="theater_chase_rainbow">15. Theater Chase Rainbow</option>
+                            <option value="running_lights">16. Running Lights</option>
+                            <option value="twinkle">17. Twinkle</option>
+                            <option value="twinkle_random">18. Twinkle Random</option>
+                            <option value="twinkle_fade">19. Twinkle Fade</option>
+                            <option value="twinkle_fade_random">20. Twinkle Fade Random</option>
+                            <option value="sparkle">21. Sparkle</option>
+                            <option value="flash_sparkle">22. Flash Sparkle</option>
+                            <option value="hyper_sparkle">23. Hyper Sparkle</option>
+                            <option value="strobe">24. Strobe</option>
+                            <option value="strobe_rainbow">25. Strobe Rainbow</option>
+                            <option value="multi_strobe">26. Multi Strobe</option>
+                            <option value="blink_rainbow">27. Blink Rainbow</option>
+                            <option value="chase_white">28. Chase White</option>
+                            <option value="chase_color">29. Chase Color</option>
+                            <option value="chase_random">30. Chase Random</option>
+                            <option value="chase_rainbow">31. Chase Rainbow</option>
+                            <option value="chase_flash">32. Chase Flash</option>
+                            <option value="chase_flash_random">33. Chase Flash Random</option>
+                            <option value="chase_rainbow_white">34. Chase Rainbow White</option>
+                            <option value="chase_blackout">35. Chase Blackout</option>
+                            <option value="chase_blackout_rainbow">36. Chase Blackout Rainbow</option>
+                            <option value="color_sweep_random">37. Color Sweep Random</option>
+                            <option value="running_color">38. Running Color</option>
+                            <option value="running_red_blue">39. Running Red Blue</option>
+                            <option value="running_random">40. Running Random</option>
+                            <option value="larson_scanner">41. Larson Scanner (Cylon)</option>
+                            <option value="comet">42. Comet</option>
+                            <option value="fireworks">43. Fireworks</option>
+                            <option value="fireworks_random">44. Fireworks Random</option>
+                            <option value="merry_christmas">45. Merry Christmas</option>
+                            <option value="fire_flicker">46. Fire Flicker</option>
+                            <option value="fire_soft">47. Fire Soft</option>
+                            <option value="dual_color_wave">48. Dual Color Wave</option>
+                            <option value="circulating">49. Circulating</option>
+                            <option value="tricolor_wipe">50. Tricolor Wipe</option>
+                            <option value="icu">51. ICU</option>
+                            <option value="multi_comet">52. Multi Comet</option>
+                            <option value="dual_larson_scanner">53. Dual Larson Scanner</option>
+                            <option value="random_chase">54. Random Chase</option>
+                            <option value="oscillate">55. Oscillate</option>
+                            <option value="pride_2015">56. Pride 2015</option>
+                        </select>
+                    </div>
+
+                    <div class="field-group">
+                        <label class="field-label" for="speedSlider">
+                            FX Speed
+                            <span class="field-val-badge" id="speedValBadge">50 ms</span>
+                        </label>
+                        <input type="range" id="speedSlider" class="slider-custom" min="5" max="2000" step="5"
+                            value="60">
+                    </div>
+                </div>
+            </section>
+
+            <!-- OCR Calibration Studio & Projects Panel (Spawned below Lights Panel upon unlock) -->
+            <section class="glass-panel ocr-projects-panel hidden" id="ocrProjectsPanel">
+                <div class="panel-header">
+                    <div class="panel-title-wrap">
+                        <div class="panel-icon-badge"
+                            style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-2h6v2zm4-4H6v-2h10v2zm0-4H6V7h10v2z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="panel-title">OCR Calibration Studio</h2>
+                            <p class="panel-subtitle">Multi-thermometer display detection, interactive bounding boxes &
+                                Excel export</p>
+                        </div>
+                    </div>
+                    <div class="ocr-header-actions" style="display: flex; gap: 8px; align-items: center;">
+                        <button type="button" class="btn-panel-action btn-add-project" id="btnCreateProjectPrompt"
+                            title="Create New Project">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                            </svg>
+                            <span>+ New Project</span>
+                        </button>
+                        <button class="panel-collapse-btn" id="collapseOcrPanel" type="button"
+                            title="Toggle Projects Panel">
+                            <svg class="chevron-icon" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="panel-content ocr-panel-content" id="ocrPanelContent">
+                    <!-- Active Project Banner & ROI Toolbar -->
+                    <div class="ocr-toolbar-card">
+                        <div class="ocr-active-project-bar">
+                            <div class="active-proj-info">
+                                <span class="active-proj-label">Active Project:</span>
+                                <span class="active-proj-name" id="currentActiveProjectName">None (Select radio
+                                    below)</span>
+                            </div>
+                            <div class="ocr-roi-quick-actions">
+                                <button type="button" class="btn-roi-tool" id="btnAutoDetectRoi"
+                                    title="Auto-detect digital thermometers in chamber/device frame">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                        <path
+                                            d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                                    </svg>
+                                    <span>Auto-Detect</span>
+                                </button>
+                                <button type="button" class="btn-roi-tool" id="btnAddChamberBox"
+                                    title="Add manual ROI bounding box to Raspberry Pi Chamber">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                                    </svg>
+                                    <span>+ Box Chamber</span>
+                                </button>
+                                <button type="button" class="btn-roi-tool" id="btnAddDeviceBox"
+                                    title="Add manual ROI bounding box to Device Camera (Standard)">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                                    </svg>
+                                    <span>+ Box Standard</span>
+                                </button>
+                                <button type="button" class="btn-roi-tool btn-roi-clear" id="btnClearAllBoxes"
+                                    title="Clear bounding boxes for active project">
+                                    <span>Clear Boxes</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Non-Digital / Unsupported Instrument Warning Banner -->
+                        <div id="ocrAnalogWarningBanner" class="ocr-analog-warning hidden">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+                            </svg>
+                            <div class="ocr-warning-content">
+                                <strong id="ocrWarningTitle">Unsupported Non-Digital Instrument:</strong>
+                                <span id="ocrAnalogWarningText">Only digital thermometers with active numeric displays
+                                    (LCD/VFD/LED) are supported. Mercury-in-glass, analog dials, and plastic strips are
+                                    not supported.</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Projects List Header & Scrollable List -->
+                    <div class="projects-list-container">
+                        <div class="projects-list-scrollable" id="projectsListScrollable">
+                            <div class="projects-empty-state" id="projectsEmptyState">
+                                <p>No calibration projects created yet. Click <strong>+ New Project</strong> above to
+                                    create one (e.g. "PT.abc" or "Project01").</p>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </section>
+            </section>
         </div>
 
     </main>
@@ -1579,9 +1634,10 @@
         <div class="ocr-modal-card">
             <div class="ocr-modal-header">
                 <div class="ocr-modal-title">
-                    <div class="ocr-modal-icon" style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
+                    <div class="ocr-modal-icon"
+                        style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                         </svg>
                     </div>
                     <div>
@@ -1594,7 +1650,8 @@
             <form id="newProjectForm" class="ocr-modal-body" autocomplete="off" onsubmit="return false;">
                 <div class="ocr-input-group">
                     <label for="newProjectNameInput">Project Name</label>
-                    <input type="text" id="newProjectNameInput" class="ocr-input" placeholder="e.g. PT.abc or Project01" required>
+                    <input type="text" id="newProjectNameInput" class="ocr-input" placeholder="e.g. PT.abc or Project01"
+                        required>
                     <div class="ocr-error-msg" id="newProjectErrorMsg"></div>
                 </div>
                 <div class="ocr-modal-actions">
@@ -1616,7 +1673,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=5.2"></script>
+    <script src="/static/js/app.js?v=5.8"></script>
 </body>
 
 </html>

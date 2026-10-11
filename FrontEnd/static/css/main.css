@@ -842,6 +842,10 @@ body {
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease;
 }
 
+.viewport-stream.hidden {
+    display: none !important;
+}
+
 .viewport-overlay-top {
     position: absolute;
     top: 12px;
@@ -1393,60 +1397,181 @@ input[type="number"] {
     transform: scale(1.15);
 }
 
-/* LED Studio Styles */
+/* LED Studio Master Card & Illuminated Line Bulb Button */
 .led-master-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1rem 1.25rem;
-    background: rgba(10, 15, 26, 0.7);
+    gap: 1rem;
+    padding: 1.15rem 1.35rem;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 15, 26, 0.95) 100%);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     margin-bottom: 1.25rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
 }
 
-.switch-toggle {
+.led-master-meta {
+    flex: 1;
+    min-width: 0;
+}
+
+.led-master-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.2rem;
+    letter-spacing: 0.02em;
+}
+
+.led-master-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Premium Interactive LED Bulb Button */
+.btn-led-bulb {
     position: relative;
-    display: inline-block;
-    width: 52px;
-    height: 28px;
-}
-
-.switch-toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.switch-slider {
-    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0.55rem 1.15rem 0.55rem 0.75rem;
+    background: rgba(17, 24, 39, 0.9);
+    border: 1.5px solid rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
     cursor: pointer;
-    inset: 0;
-    background-color: rgba(255, 255, 255, 0.12);
-    transition: .3s;
-    border-radius: 34px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    outline: none;
+    overflow: visible;
 }
 
-.switch-slider:before {
+.btn-led-bulb:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.btn-led-bulb:active {
+    transform: translateY(1px) scale(0.98);
+}
+
+.led-bulb-glow-backdrop {
     position: absolute;
-    content: "";
-    height: 20px;
-    width: 20px;
-    left: 4px;
-    bottom: 4px;
-    background-color: white;
-    transition: .3s;
+    inset: -2px;
+    border-radius: 9999px;
+    opacity: 0.3;
+    pointer-events: none;
+    transition: all 0.35s ease;
+    z-index: 0;
+}
+
+.led-bulb-icon-box {
+    position: relative;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 0.3s ease;
+    z-index: 1;
 }
 
-input:checked+.switch-slider {
-    background-color: var(--neon-green);
-    box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+.led-bulb-icon {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+    z-index: 1;
 }
 
-input:checked+.switch-slider:before {
-    transform: translateX(24px);
+.bulb-rays {
+    transition: opacity 0.3s ease, stroke 0.3s ease;
 }
+
+.bulb-glass {
+    transition: fill 0.3s ease, stroke 0.3s ease;
+}
+
+.bulb-filament {
+    transition: stroke 0.3s ease;
+}
+
+.bulb-base {
+    transition: stroke 0.3s ease;
+}
+
+.led-bulb-text-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.15;
+    z-index: 1;
+    min-width: 80px;
+}
+
+.led-bulb-state-title {
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    transition: color 0.3s ease;
+}
+
+.led-bulb-state-sub {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    transition: color 0.3s ease;
+    white-space: nowrap;
+}
+
+/* OFF state default styling */
+.btn-led-bulb.is-off .led-bulb-icon-box {
+    background: #111827;
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+.btn-led-bulb.is-off .led-bulb-icon {
+    color: #4b5563;
+}
+
+.btn-led-bulb.is-off .bulb-rays {
+    opacity: 0;
+}
+
+.btn-led-bulb.is-off .bulb-glass {
+    fill: transparent;
+    stroke: #4b5563;
+}
+
+.btn-led-bulb.is-off .bulb-filament {
+    stroke: #374151;
+}
+
+.btn-led-bulb.is-off .bulb-base {
+    stroke: #4b5563;
+}
+
+.btn-led-bulb.is-off .led-bulb-state-title {
+    color: #6b7280;
+}
+
+/* ON state pulsate animation on radiating rays */
+@keyframes bulbRayPulse {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50% { transform: scale(1.12); opacity: 1; }
+}
+
+.btn-led-bulb.is-on .bulb-rays {
+    transform-origin: center;
+    animation: bulbRayPulse 2s ease-in-out infinite;
+}
+
 
 /* Virtual LED Strip Simulator */
 .led-strip-preview-wrapper {
