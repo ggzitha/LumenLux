@@ -23,6 +23,7 @@ import base64
 import re
 import json
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from PIL import Image
 from ocr_engine import detect_thermometers_in_image, perform_display_ocr, generate_project_excel
 
 # Load environment configuration
@@ -1460,7 +1461,9 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
 
     try:
         pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-        ocr_res = perform_display_ocr(pil_img, box)
+        # Live canvas test frames sent from the UI are always single-feed full viewport frames
+        is_single = bool(image_b64)
+        ocr_res = perform_display_ocr(pil_img, box, is_single_feed=is_single)
 
         crop_b64 = ""
         if ocr_res.get("crop_bytes"):

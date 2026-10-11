@@ -69,15 +69,10 @@ def verify_is_digital_display(cv_crop: Any) -> Tuple[bool, float, str]:
 
     # 1. Check for Green VFD / LED display (e.g. Fluke 1502A standard thermometer)
     b, g, r = cv2.split(cv_crop)
-    green_mean = float(np.mean(g))
-    red_mean = float(np.mean(r))
-    if green_mean > (red_mean + 15) and green_mean > 35:
-        # High green dominance with high contrast segments
-        _, g_thresh = cv2.threshold(g, 60, 255, cv2.THRESH_BINARY)
-        non_zero = cv2.countNonZero(g_thresh)
-        fill_ratio = non_zero / float(w * h)
-        if 0.02 <= fill_ratio <= 0.65:
-            return True, 0.95, "Green VFD/LED digital display detected"
+    g_diff = cv2.subtract(g, cv2.max(r, b))
+    green_count = int(np.count_nonzero(g_diff > 20))
+    if green_count >= max(35, int(w * h * 0.002)):
+        return True, 0.98, "Green VFD/LED digital display detected"
 
     # 2. Check for standard 7-segment / numeric LCD display
     # Sharp horizontal and vertical segment edge energy
@@ -389,11 +384,14 @@ def _fallback_default_boxes() -> Dict[str, Any]:
     }
 
 
-def get_slot_bounds(img_w: int, img_h: int, camera_type: str = "chamber") -> Tuple[int, int, int, int]:
+def get_slot_bounds(img_w: int, img_h: int, camera_type: str = "chamber", is_single_feed: bool = False) -> Tuple[int, int, int, int]:
     """
     Computes absolute pixel bounding rectangle (slot_x, slot_y, slot_w, slot_h)
     for the designated camera feed within single or dual stitched composite captures.
     """
+    if is_single_feed:
+        return 0, 0, img_w, img_h
+
     cam = (camera_type or "chamber").lower()
     is_device = (cam == "device" or "standard" in cam)
 
@@ -406,8 +404,9 @@ def get_slot_bounds(img_w: int, img_h: int, camera_type: str = "chamber") -> Tup
         slot_y = border + slot_h if is_device else border
         return slot_x, slot_y, slot_w, slot_h
 
-    # 2. Raw dual vertical stack without twibbon border (e.g. 1920 x 2160)
-    if img_h >= int(img_w * 0.95):
+    # 2. Raw dual vertical stack without twibbon border (e.g. 1920 x 2160, strictly dual 16:9 composite)
+    # Only triggers when dimensions match a dual 1080p stack (h >= 2000 and 1800 <= w <= 2100)
+    if img_h >= 2000 and 1800 <= img_w <= 2100:
         half_h = img_h // 2
         slot_y = half_h if is_device else 0
         return 0, slot_y, img_w, half_h
@@ -491,7 +490,7 @@ def auto_deskew_and_unwarp_quad(cv_crop: Any) -> Any:
     return cv_crop
 
 
-def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any]) -> Tuple[Image.Image, Optional[Any]]:
+def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any], is_single_feed: bool = False) -> Tuple[Image.Image, Optional[Any]]:
     """
     Extracts the display region from a composite snapshot using either
     user-defined 4-point quadrilateral perspective pins or normalized bounding box coords.
@@ -499,7 +498,7 @@ def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any]) -> Tuple[Image
     """
     img_w, img_h = pil_img.size
     cam_type = box.get("camera_type") or box.get("target") or "chamber"
-    slot_x, slot_y, slot_w, slot_h = get_slot_bounds(img_w, img_h, cam_type)
+    slot_x, slot_y, slot_w, slot_h = get_slot_bounds(img_w, img_h, cam_type, is_single_feed=is_single_feed)
 
     cv_full = None
     if HAS_CV2 and np is not None and cv2 is not None:
@@ -553,43 +552,106 @@ def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any]) -> Tuple[Image
     return crop_pil, crop_cv
 
 
-def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image) -> Tuple[Image.Image, str]:
+def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image, box: Optional[Dict[str, Any]] = None) -> Tuple[Image.Image, str]:
     """
     Optimized preprocessing pipeline for 7-segment LCD and VFD/LED thermometer displays.
     Bridges segment gaps and normalizes contrast for maximum Tesseract OCR precision.
+    Supports Fluke 1502A Green VFD readouts as well as Chamber HTC LCD displays.
     """
-    if not HAS_CV2 or cv_crop is None or np is None or cv2 is None or cv_crop.size == 0:
+    cam_type = (box.get("camera_type") or box.get("target") or "").lower() if box else ""
+    lbl = str(box.get("label", "")).lower() if box else ""
+    is_device_cam = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
+
+    # -------------------------------------------------------------
+    # Fallback when OpenCV is not available
+    # -------------------------------------------------------------
+    if not HAS_CV2 or cv_crop is None or np is None or cv2 is None or (hasattr(cv_crop, "size") and cv_crop.size == 0):
+        # Check green VFD in Pillow
+        w, h = pil_crop.size
+        im_pixels = pil_crop.load()
+        min_x, max_x, min_y, max_y = w, 0, h, 0
+        green_count = 0
+        for y in range(h):
+            for x in range(w):
+                r_val, g_val, b_val = im_pixels[x, y][:3]
+                if g_val > 65 and g_val > (r_val + 18) and g_val > (b_val + 18):
+                    min_x = min(min_x, x)
+                    max_x = max(max_x, x)
+                    min_y = min(min_y, y)
+                    max_y = max(max_y, y)
+                    green_count += 1
+
+        if green_count >= max(35, int(w * h * 0.002)) or (is_device_cam and green_count >= 20):
+            pad = 16
+            x1 = max(0, min_x - pad)
+            y1 = max(0, min_y - pad)
+            x2 = min(w, max_x + pad)
+            y2 = min(h, max_y + pad)
+            bw = max(10, x2 - x1)
+            bh = max(10, y2 - y1)
+            tmask = Image.new("L", (bw, bh), 255)
+            tpixels = tmask.load()
+            for y in range(y1, y2):
+                for x in range(x1, x2):
+                    r_val, g_val, b_val = im_pixels[x, y][:3]
+                    if g_val > 65 and g_val > (r_val + 16) and g_val > (b_val + 16):
+                        tpixels[x - x1, y - y1] = 0
+            from PIL import ImageFilter
+            dilated = tmask.filter(ImageFilter.MinFilter(3))
+            return ImageOps.expand(dilated, border=20, fill=255), "green_vfd"
+
+        # Standard LCD Pillow fallback
         gray = ImageOps.grayscale(pil_crop)
         enhancer = ImageEnhance.Contrast(gray)
         contrast = enhancer.enhance(2.2)
         return ImageOps.expand(contrast, border=15, fill=255), "standard_lcd"
 
+    # -------------------------------------------------------------
+    # OpenCV High-Precision Preprocessing Pipeline
+    # -------------------------------------------------------------
     h, w = cv_crop.shape[:2]
     b, g, r = cv2.split(cv_crop)
-    green_mean = float(np.mean(g))
-    red_mean = float(np.mean(r))
+    total_px = float(w * h)
 
     # 1. Green VFD / LED Readout (Fluke 1502A Standard Thermometer)
-    if green_mean > (red_mean + 10) or (green_mean > 32 and float(np.max(g)) > 110 and red_mean < 85):
-        # Color difference: isolate pure luminous green
-        g_diff = cv2.subtract(g, cv2.max(r, b))
+    g_diff = cv2.subtract(g, cv2.max(r, b))
+    green_count = int(np.count_nonzero(g_diff > 20))
+    is_vfd = (
+        green_count >= max(35, int(total_px * 0.002))
+        or (is_device_cam and green_count >= 20)
+    )
 
-        # Threshold glowing segments
-        _, thresh = cv2.threshold(g_diff, 28, 255, cv2.THRESH_BINARY)
+    if is_vfd:
+        # Isolate luminous green segments
+        _, thresh = cv2.threshold(g_diff, 18, 255, cv2.THRESH_BINARY)
+        _, g_min = cv2.threshold(g, 65, 255, cv2.THRESH_BINARY)
+        thresh = cv2.bitwise_and(thresh, g_min)
+
+        # Auto-crop to active glowing digit bounding box to eliminate buttons, logos, and bezel
+        pts = cv2.findNonZero(thresh)
+        if pts is not None and len(pts) >= 40:
+            bx, by, bw, bh = cv2.boundingRect(pts)
+            pad_x = 16
+            pad_y = 12
+            x1 = max(0, bx - pad_x)
+            y1 = max(0, by - pad_y)
+            x2 = min(w, bx + bw + pad_x)
+            y2 = min(h, by + bh + pad_y)
+            thresh = thresh[y1:y2, x1:x2]
 
         # Morphological Closing: Bridges physical segment gaps so digits form continuous readable glyphs
         k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, k_close)
 
-        # Subtle dilation to preserve decimal dots (e.g. the '.' in 20.163)
+        # Subtle dilation to ensure thick continuous digit strokes and preserve decimal dot
         k_dot = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         reinforced = cv2.dilate(closed, k_dot, iterations=1)
 
         # Invert: Black text on pure white background
         inverted = cv2.bitwise_not(reinforced)
 
-        # Add 15px white margin so edge digits are never cut off by Tesseract character boundary finder
-        padded = cv2.copyMakeBorder(inverted, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+        # Add 20px white margin so edge digits are never cut off by Tesseract character boundary finder
+        padded = cv2.copyMakeBorder(inverted, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255, 255, 255])
         return Image.fromarray(padded), "green_vfd"
 
     # 2. Standard 7-Segment LCD Display (HTC-1 / HTC-2 Black on Grey LCD)
@@ -615,23 +677,33 @@ def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image) -> Tuple[Im
     return Image.fromarray(padded), "standard_lcd"
 
 
-def extract_thermometer_value(text: str) -> Optional[float]:
+def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -> Optional[float]:
     """
     Parses numeric calibration temperatures and fixes common 7-segment character ambiguities.
+    Supports high precision 3-decimal readouts from standard thermometers (e.g. 20.953 from Fluke 1502A).
     """
     if not text:
         return None
 
-    # Replace common 7-segment character misrecognitions
-    t = text.replace(" ", "")
+    cam_type = (box.get("camera_type") or box.get("target") or "").lower() if box else ""
+    lbl = str(box.get("label", "")).lower() if box else ""
+    is_standard = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
+
+    # 1. Normalize spaces around dots: '20 . 953' -> '20.953'
+    t = re.sub(r'(\d+)\s*\.\s*(\d+)', r'\1.\2', text)
+    # 2. Spaces between digits when dot was omitted: '20 953' -> '20.953'
+    t = re.sub(r'(\b\d{1,2})\s+(\d{2,4}\b)', r'\1.\2', t)
+    # 3. Replace comma with dot
+    t = t.replace(",", ".")
+    # 4. Clean 7-segment letter confusions
     t = t.replace("O", "0").replace("o", "0")
     t = t.replace("S", "5").replace("s", "5")
     t = t.replace("B", "8")
     t = t.replace("l", "1").replace("I", "1").replace("|", "1")
-    t = t.replace(",", ".")
+    t = t.replace("Z", "2").replace("z", "2")
 
-    # Match floating point numbers (e.g. 20.163, 20.0, 19.8, -5.2, 100.00)
-    matches = re.findall(r"[-+]?\d{1,3}(?:\.\d{1,4})?", t)
+    # A. Floating point numbers with decimal point (e.g. 20.953, 20.955, 20.947, 20.5, -5.2, 100.0)
+    matches = re.findall(r"[-+]?\d{1,3}\.\d{1,4}", t)
     for m in matches:
         try:
             val = float(m)
@@ -640,7 +712,28 @@ def extract_thermometer_value(text: str) -> Optional[float]:
         except ValueError:
             continue
 
-    # Fallback to integer numbers
+    # B. If 5-digit number without dot (e.g. '20953' from Fluke 1502A which has 3 decimals)
+    five_digit = re.findall(r"\b\d{5}\b", t)
+    for m in five_digit:
+        try:
+            val = float(m) / 1000.0
+            if -50.0 <= val <= 250.0:
+                return round(val, 3)
+        except ValueError:
+            continue
+
+    # C. If 4-digit number on standard thermometer (e.g. '2095' -> 20.95)
+    if is_standard:
+        four_digit = re.findall(r"\b\d{4}\b", t)
+        for m in four_digit:
+            try:
+                val = float(m) / 100.0
+                if -50.0 <= val <= 250.0:
+                    return round(val, 2)
+            except ValueError:
+                continue
+
+    # D. Standard integer fallback (e.g. '20')
     int_matches = re.findall(r"[-+]?\d{1,3}", t)
     for m in int_matches:
         try:
@@ -653,13 +746,13 @@ def extract_thermometer_value(text: str) -> Optional[float]:
     return None
 
 
-def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, Any]:
+def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_feed: bool = False) -> Dict[str, Any]:
     """
     Extracts the designated ROI display region with perspective unwarping,
     performs segment-gap bridging preprocessing, and extracts numeric temperature readout.
     """
     # 1. Extract crop with accurate slot coordinate mapping & perspective unwarping
-    crop, cv_crop = extract_roi_region(pil_img, box)
+    crop, cv_crop = extract_roi_region(pil_img, box, is_single_feed=is_single_feed)
 
     # 2. Save high-resolution thumbnail bytes for Excel inspection
     thumb_buf = io.BytesIO()
@@ -677,7 +770,7 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
         }
 
     # 3. Preprocess for 7-Segment / VFD
-    cleaned_ocr_img, display_type = preprocess_for_7segment_ocr(cv_crop, crop)
+    cleaned_ocr_img, display_type = preprocess_for_7segment_ocr(cv_crop, crop, box=box)
 
     # 4. Tesseract OCR invocation with specialized PSM modes and Whitelist
     tess_prefix_arg = ""
@@ -694,9 +787,10 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
 
     ocr_configs = [
         f"{tess_prefix_arg}--psm 7 -c tessedit_char_whitelist=0123456789.-C% ",
+        f"{tess_prefix_arg}--psm 8 -c tessedit_char_whitelist=0123456789.-C% ",
         f"{tess_prefix_arg}--psm 6 -c tessedit_char_whitelist=0123456789.-C% ",
-        f"{tess_prefix_arg}--psm 11 -c tessedit_char_whitelist=0123456789.-C% ",
-        f"{tess_prefix_arg}--psm 8 -c tessedit_char_whitelist=0123456789.- "
+        f"{tess_prefix_arg}--psm 13 -c tessedit_char_whitelist=0123456789.-C% ",
+        f"{tess_prefix_arg}--psm 7 "
     ]
 
     extracted_text = ""
@@ -706,7 +800,7 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
         try:
             res = pytesseract.image_to_string(cleaned_ocr_img, config=cfg).strip()
             if res:
-                v = extract_thermometer_value(res)
+                v = extract_thermometer_value(res, box=box)
                 if v is not None:
                     extracted_text = res
                     cleaned_val = v
@@ -717,12 +811,12 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
             pass
 
     if cleaned_val is None and extracted_text:
-        cleaned_val = extract_thermometer_value(extracted_text)
+        cleaned_val = extract_thermometer_value(extracted_text, box=box)
 
     status = "error"
     if cleaned_val is not None:
         status = "success"
-    elif extracted_text:
+    elif extracted_text and extracted_text != "N/A":
         status = "warning"
     else:
         extracted_text = "N/A"

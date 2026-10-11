@@ -2656,19 +2656,68 @@ async function testBoxOcr(boxId) {
             : document.getElementById("chamberVideo");
         const streamImg = document.getElementById("cameraStream");
 
+        // Render live camera stream to a standard 16:9 canvas (1920x1080)
+        // that 100% matches what is displayed inside the 16:9 viewport card where pins were placed
+        const slotW = 1920;
+        const slotH = 1080;
         const testCanvas = document.createElement("canvas");
-        if (video && video.videoWidth > 0 && !video.classList.contains("hidden")) {
-            testCanvas.width = video.videoWidth;
-            testCanvas.height = video.videoHeight;
-            const tCtx = testCanvas.getContext("2d");
-            tCtx.drawImage(video, 0, 0);
+        testCanvas.width = slotW;
+        testCanvas.height = slotH;
+        const tCtx = testCanvas.getContext("2d");
+
+        if (isDevice && video && video.videoWidth > 0 && !video.classList.contains("hidden")) {
+            tCtx.save();
+            const cx = slotW / 2;
+            const cy = slotH / 2;
+            tCtx.translate(cx, cy);
+
+            const rot = state.deviceCamera.rotation || 0;
+            tCtx.rotate((rot * Math.PI) / 180);
+
+            const z2 = state.deviceCamera.digital_zoom || 1.0;
+            const scaleX = (state.deviceCamera.flip_h ? -z2 : z2);
+            const scaleY = (state.deviceCamera.flip_v ? -z2 : z2);
+            tCtx.scale(scaleX, scaleY);
+
+            const w2 = video.videoWidth;
+            const h2 = video.videoHeight;
+            const fitMode = state.deviceCamera.fit_mode || "cover";
+            let scale2;
+            if (rot === 90 || rot === 270) {
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotH / w2, slotW / h2)
+                    : Math.min(slotH / w2, slotW / h2);
+            } else {
+                scale2 = fitMode === "cover"
+                    ? Math.max(slotW / w2, slotH / h2)
+                    : Math.min(slotW / w2, slotH / h2);
+            }
+            const drawW2 = w2 * scale2;
+            const drawH2 = h2 * scale2;
+            tCtx.drawImage(video, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
+            tCtx.restore();
             imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
-        } else if (!isDevice && streamImg && streamImg.naturalWidth) {
-            testCanvas.width = streamImg.naturalWidth;
-            testCanvas.height = streamImg.naturalHeight;
-            const tCtx = testCanvas.getContext("2d");
-            tCtx.drawImage(streamImg, 0, 0);
-            imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+        } else if (!isDevice) {
+            const hasVideo = video && video.videoWidth > 0 && !video.classList.contains("hidden");
+            const srcEl = hasVideo ? video : streamImg;
+            if (srcEl && (srcEl.videoWidth || srcEl.naturalWidth)) {
+                tCtx.save();
+                const cx = slotW / 2;
+                const cy = slotH / 2;
+                tCtx.translate(cx, cy);
+                tCtx.scale(state.camera.flip_h ? -1 : 1, state.camera.flip_v ? -1 : 1);
+                const z = state.camera.digital_zoom || 1.0;
+                tCtx.scale(z, z);
+
+                const w1 = srcEl.videoWidth || srcEl.naturalWidth;
+                const h1 = srcEl.videoHeight || srcEl.naturalHeight;
+                const scale1 = Math.max(slotW / w1, slotH / h1);
+                const drawW1 = w1 * scale1;
+                const drawH1 = h1 * scale1;
+                tCtx.drawImage(srcEl, -drawW1 / 2, -drawH1 / 2, drawW1, drawH1);
+                tCtx.restore();
+                imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+            }
         }
     } catch (e) {
         console.warn("Could not capture live video frame, backend will use latest project snapshot:", e);
@@ -2767,7 +2816,52 @@ document.getElementById("btnOkRoiTestModal")?.addEventListener("click", () => {
     document.getElementById("roiTestResultModal")?.classList.remove("active");
 });
 
+function updateActiveRoiVisuals(box) {
+    if (!box) return;
+    const container = (box.camera_type === "device")
+        ? document.getElementById("roiOverlayDevice")
+        : document.getElementById("roiOverlayChamber");
+    if (!container) return;
+
+    // 1. Update SVG polygon points in real-time
+    const ptsStr = box.points.map(p => `${(p[0] * 100).toFixed(2)},${(p[1] * 100).toFixed(2)}`).join(" ");
+    const poly = container.querySelector(`.roi-poly[data-box-id="${box.id}"]`);
+    if (poly) poly.setAttribute("points", ptsStr);
+
+    // 2. Update pin handle coordinates
+    box.points.forEach((p, idx) => {
+        const pin = container.querySelector(`.roi-pin[data-box-id="${box.id}"][data-pin-idx="${idx}"]`);
+        if (pin) {
+            pin.style.left = `${(p[0] * 100).toFixed(2)}%`;
+            pin.style.top = `${(p[1] * 100).toFixed(2)}%`;
+        }
+    });
+
+    // 3. Update label position
+    const minX = Math.min(...box.points.map(p => p[0]));
+    const minY = Math.min(...box.points.map(p => p[1]));
+    const labelEl = container.querySelector(`.roi-box-label[data-box-id="${box.id}"]`);
+    if (labelEl) {
+        labelEl.style.left = `${(minX * 100).toFixed(2)}%`;
+        labelEl.style.top = `${Math.max(0, (minY * 100) - 2.8).toFixed(2)}%`;
+    }
+
+    // 4. Update rectangular box container if in rect mode
+    if (box.mode === "rect") {
+        const rectEl = container.querySelector(`.roi-box[data-box-id="${box.id}"]`);
+        if (rectEl) {
+            rectEl.style.left = `${(box.x * 100).toFixed(2)}%`;
+            rectEl.style.top = `${(box.y * 100).toFixed(2)}%`;
+            rectEl.style.width = `${(box.width * 100).toFixed(2)}%`;
+            rectEl.style.height = `${(box.height * 100).toFixed(2)}%`;
+        }
+    }
+}
+
 function setupRoiInteractionHandlers() {
+    if (ocrStudioState.handlersInitialized) return;
+    ocrStudioState.handlersInitialized = true;
+
     // Universal pointer events for mouse and touch dragging & resizing
     const onPointerDown = (e) => {
         const pin = e.target.closest(".roi-pin");
@@ -2797,8 +2891,9 @@ function setupRoiInteractionHandlers() {
         const cRect = container.getBoundingClientRect();
         ocrStudioState.activeBoxId = targetBoxId;
 
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const pointer = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
+        const clientX = pointer.clientX;
+        const clientY = pointer.clientY;
 
         ocrStudioState.dragStart = {
             clientX,
@@ -2828,7 +2923,7 @@ function setupRoiInteractionHandlers() {
             ocrStudioState.isResizingRoi = false;
         }
 
-        e.preventDefault();
+        if (e.cancelable) e.preventDefault();
     };
 
     const onPointerMove = (e) => {
@@ -2837,18 +2932,25 @@ function setupRoiInteractionHandlers() {
         const box = ocrStudioState.boxes.find(b => b.id === ocrStudioState.activeBoxId);
         if (!box) return;
 
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const container = (box.camera_type === "device")
+            ? document.getElementById("roiOverlayDevice")
+            : document.getElementById("roiOverlayChamber");
+        if (!container) return;
 
-        const dx = (clientX - ocrStudioState.dragStart.clientX) / ocrStudioState.dragStart.containerW;
-        const dy = (clientY - ocrStudioState.dragStart.clientY) / ocrStudioState.dragStart.containerH;
+        const cRect = container.getBoundingClientRect();
+        const pointer = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
+        const clientX = pointer.clientX;
+        const clientY = pointer.clientY;
 
         if (ocrStudioState.isDraggingPin) {
             const pIdx = ocrStudioState.activePinIdx;
-            const origPt = ocrStudioState.dragStart.points[pIdx];
-            const newX = parseFloat(Math.max(0, Math.min(1, origPt[0] + dx)).toFixed(4));
-            const newY = parseFloat(Math.max(0, Math.min(1, origPt[1] + dy)).toFixed(4));
-            box.points[pIdx] = [newX, newY];
+            // Direct finger touch mapping: pin is locked exactly under the fingertip
+            const normX = Math.max(0, Math.min(1, (clientX - cRect.left) / cRect.width));
+            const normY = Math.max(0, Math.min(1, (clientY - cRect.top) / cRect.height));
+            box.points[pIdx] = [
+                parseFloat(normX.toFixed(4)),
+                parseFloat(normY.toFixed(4))
+            ];
 
             const minX = Math.min(...box.points.map(p => p[0]));
             const maxX = Math.max(...box.points.map(p => p[0]));
@@ -2858,7 +2960,11 @@ function setupRoiInteractionHandlers() {
             box.y = parseFloat(minY.toFixed(4));
             box.width = parseFloat((maxX - minX).toFixed(4));
             box.height = parseFloat((maxY - minY).toFixed(4));
+
+            updateActiveRoiVisuals(box);
         } else if (ocrStudioState.isDraggingRoi) {
+            const dx = (clientX - ocrStudioState.dragStart.clientX) / cRect.width;
+            const dy = (clientY - ocrStudioState.dragStart.clientY) / cRect.height;
             const origPoints = ocrStudioState.dragStart.points;
             if (origPoints) {
                 const minX = Math.min(...origPoints.map(p => p[0]));
@@ -2875,8 +2981,12 @@ function setupRoiInteractionHandlers() {
                 ]);
                 box.x = parseFloat((ocrStudioState.dragStart.boxX + clampDx).toFixed(4));
                 box.y = parseFloat((ocrStudioState.dragStart.boxY + clampDy).toFixed(4));
+
+                updateActiveRoiVisuals(box);
             }
         } else if (ocrStudioState.isResizingRoi) {
+            const dx = (clientX - ocrStudioState.dragStart.clientX) / cRect.width;
+            const dy = (clientY - ocrStudioState.dragStart.clientY) / cRect.height;
             const h = ocrStudioState.activeHandle;
             let { boxX, boxY, boxW, boxH } = ocrStudioState.dragStart;
 
@@ -2912,10 +3022,11 @@ function setupRoiInteractionHandlers() {
                 [parseFloat((box.x + box.width).toFixed(4)), parseFloat((box.y + box.height).toFixed(4))],
                 [box.x, parseFloat((box.y + box.height).toFixed(4))]
             ];
+
+            updateActiveRoiVisuals(box);
         }
 
-        renderRoiBoxes();
-        e.preventDefault();
+        if (e.cancelable) e.preventDefault();
     };
 
     const onPointerUp = () => {
@@ -2926,6 +3037,7 @@ function setupRoiInteractionHandlers() {
             ocrStudioState.activeBoxId = null;
             ocrStudioState.activePinIdx = null;
             ocrStudioState.activeHandle = null;
+            renderRoiBoxes();
             debouncedSaveRoiBoxes(200);
         }
     };
@@ -4437,6 +4549,8 @@ const FLOATING_POS_KEY = "lumen_floating_actions_pos_v2";
 function setupFloatingAssistiveTouch() {
     const toolbar = document.getElementById("unifiedActionToolbar");
     if (!toolbar) return;
+    if (toolbar._hasAssistiveTouch) return;
+    toolbar._hasAssistiveTouch = true;
 
     function isMobileMode() {
         return window.innerWidth <= 1024 || window.matchMedia("(pointer: coarse)").matches;
@@ -4497,26 +4611,26 @@ function setupFloatingAssistiveTouch() {
     let isDragging = false;
     let startX = 0;
     let startY = 0;
-    let initialLeft = 0;
-    let initialTop = 0;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
     let hasMoved = false;
     const DRAG_THRESHOLD = 5;
 
     function handleStart(e) {
         if (!isMobileMode()) return;
-        const pointer = e.touches ? e.touches[0] : e;
+        const pointer = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
         isDragging = true;
         hasMoved = false;
         startX = pointer.clientX;
         startY = pointer.clientY;
 
         const rect = toolbar.getBoundingClientRect();
-        initialLeft = rect.left;
-        initialTop = rect.top;
+        dragOffsetX = pointer.clientX - rect.left;
+        dragOffsetY = pointer.clientY - rect.top;
         toolbar.classList.add("is-dragging");
 
-        // Prevent native gesture scrolling when touching drag handle
-        if (e.cancelable && e.type === "touchstart") {
+        // Prevent native gesture scrolling when touching drag handle or capsule
+        if (e.cancelable) {
             const isButton = e.target.closest("button");
             if (!isButton || e.target.closest(".floating-drag-handle")) {
                 e.preventDefault();
@@ -4526,7 +4640,7 @@ function setupFloatingAssistiveTouch() {
 
     function handleMove(e) {
         if (!isDragging) return;
-        const pointer = e.touches ? e.touches[0] : e;
+        const pointer = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
         const deltaX = pointer.clientX - startX;
         const deltaY = pointer.clientY - startY;
 
@@ -4543,8 +4657,9 @@ function setupFloatingAssistiveTouch() {
             const maxLeft = Math.max(minLeft, vw - rect.width - 8);
             const maxTop = Math.max(minTop, vh - rect.height - 8);
 
-            const newLeft = Math.max(minLeft, Math.min(initialLeft + deltaX, maxLeft));
-            const newTop = Math.max(minTop, Math.min(initialTop + deltaY, maxTop));
+            // Direct offset locking: capsule remains strictly anchored to user's finger
+            const newLeft = Math.max(minLeft, Math.min(pointer.clientX - dragOffsetX, maxLeft));
+            const newTop = Math.max(minTop, Math.min(pointer.clientY - dragOffsetY, maxTop));
 
             toolbar.style.left = `${Math.round(newLeft)}px`;
             toolbar.style.top = `${Math.round(newTop)}px`;
