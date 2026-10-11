@@ -53,7 +53,12 @@ class CameraManager:
         
         # Stream settings
         self.target_fps = 30
-        self.resolution = (640, 480)
+        def_res_str = os.environ.get("DEFAULT_RESOLUTION", "1920x1080")
+        try:
+            rw, rh = map(int, str(def_res_str).lower().split("x"))
+            self.resolution = (rw, rh)
+        except Exception:
+            self.resolution = (1920, 1080)
         
         # State tracking
         self.last_frame = self._generate_synthetic_frame("Camera Disabled / Sleep")
@@ -337,16 +342,27 @@ class CameraManager:
                         subprocess.run(["v4l2-ctl", "-d", dev_path, f"--set-ctrl={name}={data['default']}"],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0)
             logger.info("Reset camera controls to defaults for %s", dev_path)
+            # Also restore resolution & fps to environment defaults
+            def_res = os.environ.get("DEFAULT_RESOLUTION", "1920x1080")
+            try:
+                rw, rh = map(int, str(def_res).lower().split("x"))
+                with self.lock:
+                    self.resolution = (rw, rh)
+                    self.target_fps = 30
+            except Exception:
+                pass
+            self._restart_stream_pipeline()
             return True
         except Exception as e:
             logger.error("Error resetting defaults: %s", e)
             return False
 
-    def select_camera(self, cam_id: str, width: int = None, height: int = None, fps: int = None) -> dict:
+    def select_camera(self, cam_id: str = None, width: int = None, height: int = None, fps: int = None) -> dict:
         """Switch active camera and configure stream settings."""
         logger.info("Selecting camera %s: %sx%s @ %sfps", cam_id, width, height, fps)
         with self.lock:
-            self.active_camera_id = cam_id
+            if cam_id:
+                self.active_camera_id = cam_id
             if width and height:
                 self.resolution = (int(width), int(height))
             if fps:

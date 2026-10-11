@@ -19,7 +19,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import ipaddress
 import secrets
+import base64
+import re
+import json
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from ocr_engine import detect_thermometers_in_image, perform_display_ocr, generate_project_excel
 
 # Load environment configuration
 load_dotenv()
@@ -182,23 +186,60 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-# Persistent Volume directories (Images, ML Models, and Tesseract OCR datasets)
-DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
-IMAGES_DIR = Path(os.environ.get("IMAGES_DIR", DATA_DIR / "images"))
-MODELS_DIR = Path(os.environ.get("MODELS_DIR", DATA_DIR / "models"))
-TESSDATA_DIR = Path(os.environ.get("TESSDATA_DIR", DATA_DIR / "tessdata"))
+def resolve_storage_path(env_var: str, default_rel: str) -> Path:
+    raw = os.environ.get(env_var, "").strip()
+    if raw:
+        if os.name == "nt" and (raw.startswith("/app") or raw.startswith("\\app")):
+            rel_part = raw.replace("/app/", "").replace("/app", "").replace("\\app\\", "").replace("\\app", "").strip("/\\")
+            return (BASE_DIR / rel_part) if rel_part else (BASE_DIR / default_rel)
+        return Path(raw)
+    return BASE_DIR / default_rel
 
-# Ensure directories exist
-TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-(STATIC_DIR / "css").mkdir(parents=True, exist_ok=True)
-(STATIC_DIR / "js").mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-TESSDATA_DIR.mkdir(parents=True, exist_ok=True)
+# Persistent Volume directories (Images, ML Models, and Tesseract OCR datasets)
+DATA_DIR = resolve_storage_path("DATA_DIR", "data")
+IMAGES_DIR = resolve_storage_path("IMAGES_DIR", "data/images")
+MODELS_DIR = resolve_storage_path("MODELS_DIR", "data/models")
+TESSDATA_DIR = resolve_storage_path("TESSDATA_DIR", "data/tessdata")
+PROJECTS_DIR = IMAGES_DIR / "projects"
+
+# Ensure directories exist safely
+for d in (TEMPLATES_DIR, STATIC_DIR / "css", STATIC_DIR / "js", DATA_DIR, IMAGES_DIR, MODELS_DIR, TESSDATA_DIR, PROJECTS_DIR):
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        pass
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("frontend_app")
+
+def sync_system_tessdata():
+    """Ensure traineddata models exist in TESSDATA_DIR by copying container system models if empty."""
+    try:
+        if not TESSDATA_DIR.exists():
+            TESSDATA_DIR.mkdir(parents=True, exist_ok=True)
+        if not any(TESSDATA_DIR.glob("*.traineddata")):
+            system_dirs = [
+                Path("/usr/share/tesseract-ocr/5/tessdata"),
+                Path("/usr/share/tesseract-ocr/4.00/tessdata"),
+                Path("/usr/share/tessdata"),
+                Path(r"C:\Program Files\Tesseract-OCR\tessdata")
+            ]
+            import shutil
+            for s_dir in system_dirs:
+                if s_dir.exists() and s_dir.is_dir():
+                    copied = 0
+                    for t_file in s_dir.glob("*.traineddata"):
+                        dest = TESSDATA_DIR / t_file.name
+                        if not dest.exists():
+                            shutil.copy2(t_file, dest)
+                            copied += 1
+                    if copied > 0:
+                        logger.info("Auto-populated %d Tesseract model(s) from %s to %s", copied, s_dir, TESSDATA_DIR)
+                    break
+    except Exception as e:
+        logger.debug("Tessdata sync notice: %s", e)
+
+sync_system_tessdata()
 
 # Serializer for secure signed session cookies
 serializer = URLSafeTimedSerializer(SECRET_KEY)
@@ -339,6 +380,9 @@ async def startup_event():
     try:
         await backend_client.post("/api/lights", json={"power": False}, timeout=3.0)
         await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=3.0)
+        res_norm = parse_resolution_setting(DEFAULT_RESOLUTION)
+        rw, rh = map(int, res_norm.split("x"))
+        await backend_client.post("/api/camera/select", json={"width": rw, "height": rh, "fps": 30}, timeout=3.0)
     except Exception:
         pass
 
@@ -504,6 +548,253 @@ async def verify_ocr_password(payload: dict, user: str = Depends(require_auth)):
     )
 
 
+# --- OCR STUDIO & CALIBRATION PROJECTS APIS ---
+
+PROJECTS_DIR = DATA_DIR / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def sanitize_project_name(raw_name: str) -> str:
+    cleaned = re.sub(r'[^\w\s\.-]', '', str(raw_name)).strip()
+    return cleaned.replace(' ', '_') or 'Project_01'
+
+def get_project_metadata(proj_dir: Path) -> dict:
+    meta_file = proj_dir / "project.json"
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "name": proj_dir.name,
+        "created_at": proj_dir.stat().st_ctime if proj_dir.exists() else time.time(),
+        "boxes": [
+            {"id": "box_std", "label": "Standard", "x": 0.15, "y": 0.20, "w": 0.38, "h": 0.32, "target": "device", "status": "candidate"},
+            {"id": "box_01", "label": "Thermo 01", "x": 0.12, "y": 0.20, "w": 0.22, "h": 0.24, "target": "chamber", "status": "candidate"},
+            {"id": "box_02", "label": "Thermo 02", "x": 0.38, "y": 0.16, "w": 0.22, "h": 0.24, "target": "chamber", "status": "candidate"},
+            {"id": "box_03", "label": "Thermo 03", "x": 0.64, "y": 0.22, "w": 0.22, "h": 0.24, "target": "chamber", "status": "candidate"},
+            {"id": "box_04", "label": "Thermo 04", "x": 0.24, "y": 0.52, "w": 0.22, "h": 0.24, "target": "chamber", "status": "candidate"},
+            {"id": "box_05", "label": "Thermo 05", "x": 0.52, "y": 0.54, "w": 0.22, "h": 0.24, "target": "chamber", "status": "candidate"}
+        ]
+    }
+
+def save_project_metadata(proj_dir: Path, data: dict):
+    meta_file = proj_dir / "project.json"
+    try:
+        with open(meta_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error("Could not write project metadata: %s", e)
+
+
+@app.get("/api/ocr/projects")
+async def list_ocr_projects(user: str = Depends(require_auth)):
+    """List all calibration projects and their snapshot image counts."""
+    record_activity()
+    projects = []
+    if PROJECTS_DIR.exists():
+        for p in sorted(PROJECTS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if p.is_dir():
+                meta = get_project_metadata(p)
+                snapshots = sorted(
+                    [f.name for f in p.glob("*.jpg")] + [f.name for f in p.glob("*.png")],
+                    reverse=True
+                )
+                projects.append({
+                    "id": p.name,
+                    "name": meta.get("name", p.name),
+                    "created_at": meta.get("created_at", p.stat().st_ctime),
+                    "snapshot_count": len(snapshots),
+                    "snapshots": snapshots,
+                    "boxes": meta.get("boxes", [])
+                })
+    return {"projects": projects}
+
+
+@app.post("/api/ocr/projects")
+async def create_ocr_project(payload: dict, user: str = Depends(require_auth)):
+    """Create a new OCR calibration project."""
+    record_activity()
+    raw_name = str(payload.get("name", "")).strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty")
+    
+    safe_name = sanitize_project_name(raw_name)
+    proj_dir = PROJECTS_DIR / safe_name
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    
+    meta = get_project_metadata(proj_dir)
+    meta["name"] = raw_name
+    meta["created_at"] = time.time()
+    save_project_metadata(proj_dir, meta)
+    
+    logger.info("Created new OCR Project '%s' (%s)", raw_name, safe_name)
+    return {"status": "ok", "project": {"id": safe_name, "name": raw_name, "snapshot_count": 0, "snapshots": [], "boxes": meta.get("boxes", [])}}
+
+
+@app.delete("/api/ocr/projects/{project_id}")
+async def delete_ocr_project(project_id: str, user: str = Depends(require_auth)):
+    """Delete a calibration project and its snapshots."""
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+    if proj_dir.exists() and proj_dir.is_dir():
+        import shutil
+        shutil.rmtree(proj_dir, ignore_errors=True)
+        logger.info("Deleted OCR Project '%s'", safe_name)
+        return {"status": "ok", "deleted": safe_name}
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+@app.get("/api/ocr/projects/{project_id}")
+async def get_ocr_project(project_id: str, user: str = Depends(require_auth)):
+    """Retrieve details, bounding boxes, and snapshot list for a project."""
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+    if not proj_dir.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    meta = get_project_metadata(proj_dir)
+    snapshots = sorted(
+        [f.name for f in proj_dir.glob("*.jpg")] + [f.name for f in proj_dir.glob("*.png")],
+        reverse=True
+    )
+    return {
+        "status": "ok",
+        "project": {
+            "id": safe_name,
+            "name": meta.get("name", safe_name),
+            "created_at": meta.get("created_at", proj_dir.stat().st_ctime),
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots,
+            "boxes": meta.get("boxes", [])
+        }
+    }
+
+
+@app.post("/api/ocr/projects/{project_id}/boxes")
+async def save_ocr_boxes(project_id: str, payload: dict, user: str = Depends(require_auth)):
+    """Save user-customized bounding boxes (ROIs) for the project."""
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+    if not proj_dir.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    boxes = payload.get("boxes", [])
+    meta = get_project_metadata(proj_dir)
+    meta["boxes"] = boxes
+    save_project_metadata(proj_dir, meta)
+    return {"status": "ok", "boxes": boxes}
+
+
+@app.post("/api/ocr/projects/{project_id}/save_snapshot")
+async def save_project_snapshot(project_id: str, payload: dict, user: str = Depends(require_auth)):
+    """Save captured snapshot image directly to this project's directory."""
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+    proj_dir.mkdir(parents=True, exist_ok=True)
+
+    img_b64 = payload.get("image_base64", "")
+    filename = payload.get("filename", "")
+    if not filename:
+        filename = f"LumenLux_{time.strftime('%d_%B_%Y-%H-%M-%S')}.jpg"
+
+    if "," in img_b64:
+        img_b64 = img_b64.split(",", 1)[1]
+
+    try:
+        data = base64.b64decode(img_b64)
+        target_path = proj_dir / filename
+        with open(target_path, "wb") as f:
+            f.write(data)
+        logger.info("Saved snapshot %s to project '%s'", filename, safe_name)
+        return {"status": "ok", "filename": filename, "path": str(target_path)}
+    except Exception as e:
+        logger.error("Failed to save snapshot to project: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/ocr/projects/{project_id}/detect")
+async def auto_detect_boxes(project_id: str, payload: dict, user: str = Depends(require_auth)):
+    """
+    Auto-detect digital thermometers and analyze if frame contains analog dial meters.
+    Accepts base64 image or falls back to live camera snapshot.
+    """
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+
+    img_b64 = payload.get("image_base64")
+    raw_bytes = None
+    if img_b64:
+        if "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
+        try:
+            raw_bytes = base64.b64decode(img_b64)
+        except Exception:
+            pass
+
+    if not raw_bytes and backend_client:
+        try:
+            res = await backend_client.get("/api/camera/snapshot", timeout=4.0)
+            if res.status_code == 200:
+                raw_bytes = res.content
+        except Exception:
+            pass
+
+    if not raw_bytes:
+        # Check if project has an existing snapshot
+        snaps = list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png"))
+        if snaps:
+            with open(snaps[-1], "rb") as f:
+                raw_bytes = f.read()
+
+    if not raw_bytes:
+        return {"status": "error", "message": "No image available for detection"}
+
+    detection_result = detect_thermometers_in_image(raw_bytes)
+    return {"status": "ok", **detection_result}
+
+
+@app.get("/api/ocr/projects/{project_id}/export")
+async def export_project_excel(project_id: str, user: str = Depends(require_auth)):
+    """
+    Run OCR on all project snapshots and export an .xlsx workbook with embedded thumbnails.
+    """
+    record_activity()
+    safe_name = sanitize_project_name(project_id)
+    proj_dir = PROJECTS_DIR / safe_name
+    if not proj_dir.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    meta = get_project_metadata(proj_dir)
+    boxes = meta.get("boxes", [])
+
+    try:
+        excel_bytes = generate_project_excel(proj_dir, boxes, meta.get("name", safe_name))
+        filename = f"LumenLux_OCR_{safe_name}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error("Error exporting project excel: %s", e)
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
+
+
+@app.get("/api/ocr/projects/{project_id}/snapshots/{filename}")
+async def get_project_snapshot_file(project_id: str, filename: str, user: str = Depends(require_auth)):
+    safe_name = sanitize_project_name(project_id)
+    file_path = PROJECTS_DIR / safe_name / filename
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path, media_type="image/jpeg")
+    raise HTTPException(status_code=404, detail="Snapshot not found")
+
+
 # --- BACKEND PROXY & HEAVY LIFTING APIS ---
 
 
@@ -658,6 +949,327 @@ async def proxy_mjpeg_stream(request: Request):
     )
 
 
+# ==============================================================================
+# OCR CALIBRATION STUDIO & PROJECT MANAGEMENT API ROUTES
+# ==============================================================================
+PROJECTS_DIR = IMAGES_DIR / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/ocr/verify")
+async def verify_ocr_password(request: Request):
+    """Verify security password required to unlock OCR studio features."""
+    try:
+        data = await request.json()
+        password = data.get("password", "")
+        if secrets.compare_digest(password, OCR_PASSWORD):
+            return {"success": True, "message": "OCR access unlocked"}
+        return JSONResponse({"success": False, "error": "Invalid OCR password. Access denied."}, status_code=403)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+
+
+@app.get("/api/ocr/projects")
+async def list_ocr_projects(user: str = Depends(require_auth)):
+    """Return catalog of calibration projects and their captured snapshots."""
+    projects = []
+    if not PROJECTS_DIR.exists():
+        return []
+
+    for proj_dir in sorted(PROJECTS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not proj_dir.is_dir():
+            continue
+
+        meta_file = proj_dir / "project.json"
+        meta = {}
+        if meta_file.exists():
+            try:
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+
+        proj_name = meta.get("name", proj_dir.name)
+        boxes = meta.get("boxes", [])
+
+        # Find snapshots inside project directory
+        snapshots = [
+            f.name for f in sorted(
+                list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")) + list(proj_dir.glob("*.jpeg")),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            if not f.name.startswith(".")
+        ]
+
+        projects.append({
+            "id": proj_dir.name,
+            "name": proj_name,
+            "created_at": meta.get("created_at", proj_dir.stat().st_ctime),
+            "boxes": boxes,
+            "snapshots": snapshots
+        })
+
+    return projects
+
+
+@app.post("/api/ocr/projects")
+async def create_ocr_project(request: Request, user: str = Depends(require_auth)):
+    """Create a new calibration project directory and metadata configuration."""
+    try:
+        data = await request.json()
+        name = str(data.get("name", "")).strip()
+        if not name:
+            return JSONResponse({"status": "error", "error": "Project name cannot be empty."}, status_code=400)
+
+        # Generate filesystem-safe slug directory name (strip spaces, dots, underscores)
+        slug = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name).strip("_ .")
+        if not slug:
+            slug = f"project_{int(time.time())}"
+
+        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+        target_dir = PROJECTS_DIR / slug
+        counter = 1
+        base_slug = slug
+        while target_dir.exists():
+            slug = f"{base_slug}_{counter}"
+            target_dir = PROJECTS_DIR / slug
+            counter += 1
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "id": slug,
+            "name": name,
+            "created_at": time.time(),
+            "boxes": []
+        }
+        with open(target_dir / "project.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+
+        return {
+            "status": "success",
+            "project": {
+                "id": slug,
+                "name": name,
+                "created_at": meta["created_at"],
+                "boxes": [],
+                "snapshots": []
+            }
+        }
+    except Exception as e:
+        logger.error("Failed to create project: %s", e)
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.get("/api/ocr/projects/{project_id}")
+async def get_ocr_project(project_id: str, user: str = Depends(require_auth)):
+    """Get project configuration, bounding boxes, and snapshot list."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    meta_file = proj_dir / "project.json"
+    meta = {}
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            pass
+
+    snapshots = [
+        f.name for f in sorted(
+            list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")) + list(proj_dir.glob("*.jpeg")),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
+        if not f.name.startswith(".")
+    ]
+
+    return {
+        "id": project_id,
+        "name": meta.get("name", project_id),
+        "boxes": meta.get("boxes", []),
+        "snapshots": snapshots
+    }
+
+
+@app.delete("/api/ocr/projects/{project_id}")
+async def delete_ocr_project(project_id: str, user: str = Depends(require_auth)):
+    """Delete a calibration project directory and all of its contents."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        import shutil
+        shutil.rmtree(proj_dir)
+        return {"status": "success", "message": f"Project {project_id} deleted"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/projects/{project_id}/boxes")
+async def update_project_boxes(project_id: str, request: Request, user: str = Depends(require_auth)):
+    """Update ROI bounding boxes configuration for the specified project."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    data = await request.json()
+    boxes = data.get("boxes", [])
+
+    meta_file = proj_dir / "project.json"
+    meta = {}
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            pass
+
+    meta["boxes"] = boxes
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+    return {"status": "success", "count": len(boxes)}
+
+
+@app.post("/api/ocr/projects/{project_id}/save_snapshot")
+async def save_project_snapshot(project_id: str, request: Request, user: str = Depends(require_auth)):
+    """Save a captured snapshot image directly into the active project directory."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        data = await request.json()
+        img_b64 = data.get("image_base64", "")
+        filename = data.get("filename", "")
+
+        if not img_b64 or not filename:
+            return JSONResponse({"status": "error", "error": "Missing image or filename"}, status_code=400)
+
+        # Sanitize filename
+        filename = os.path.basename(filename)
+        if "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
+
+        raw_bytes = base64.b64decode(img_b64)
+        target_path = proj_dir / filename
+        with open(target_path, "wb") as f:
+            f.write(raw_bytes)
+
+        logger.info("Saved snapshot to project %s: %s (%d bytes)", project_id, filename, len(raw_bytes))
+        return {"status": "success", "filename": filename, "path": str(target_path)}
+    except Exception as e:
+        logger.error("Failed to save snapshot to project: %s", e)
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/projects/{project_id}/detect")
+async def detect_project_displays(project_id: str, request: Request, user: str = Depends(require_auth)):
+    """Auto-detect digital thermometers and check for unsupported analog needle meters."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        data = await request.json()
+        img_b64 = data.get("image_base64", "")
+        if not img_b64:
+            return JSONResponse({"status": "error", "error": "No image data provided"}, status_code=400)
+
+        if "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
+
+        raw_bytes = base64.b64decode(img_b64)
+        detect_result = detect_thermometers_in_image(raw_bytes)
+
+        if not detect_result.get("is_digital", True) or detect_result.get("is_unsupported"):
+            return {
+                "status": "warning",
+                "is_digital": False,
+                "is_unsupported": True,
+                "unsupported_type": detect_result.get("unsupported_type", "unsupported"),
+                "message": detect_result.get("message", "Non-digital thermometer detected. Only digital thermometers with LCD/VFD/LED displays are supported."),
+                "boxes": []
+            }
+
+        boxes = detect_result.get("boxes", [])
+        if boxes:
+            # Update project.json with newly detected boxes
+            meta_file = proj_dir / "project.json"
+            meta = {}
+            if meta_file.exists():
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except Exception:
+                    pass
+            meta["boxes"] = boxes
+            with open(meta_file, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+
+        return {
+            "status": "success",
+            "is_digital": True,
+            "is_unsupported": False,
+            "detected_count": len(boxes),
+            "boxes": boxes
+        }
+    except Exception as e:
+        logger.error("Detection endpoint failed: %s", e)
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.get("/api/ocr/projects/{project_id}/export")
+async def export_project_excel(project_id: str, user: str = Depends(require_auth)):
+    """Generate Excel (.xlsx) calibration report with embedded snapshot images and OCR readouts."""
+    proj_dir = PROJECTS_DIR / project_id
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    meta_file = proj_dir / "project.json"
+    meta = {}
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            pass
+
+    proj_name = meta.get("name", project_id)
+    boxes = meta.get("boxes", [])
+
+    try:
+        excel_bytes = generate_project_excel(proj_dir, proj_name, boxes)
+        filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', proj_name)}_Calibration_Report.xlsx"
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error("Excel generation failed for project %s: %s", project_id, e)
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.get("/api/ocr/projects/{project_id}/snapshots/{filename}")
+async def get_project_snapshot(project_id: str, filename: str, user: str = Depends(require_auth)):
+    """Serve individual snapshot image from project directory."""
+    proj_dir = PROJECTS_DIR / project_id
+    clean_name = os.path.basename(filename)
+    file_path = proj_dir / clean_name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Snapshot file not found")
+    return FileResponse(file_path, media_type="image/jpeg")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=FRONTEND_PORT, reload=True)
+

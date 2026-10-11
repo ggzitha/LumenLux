@@ -12,11 +12,10 @@ services:
     ports:
       - "${FRONTEND_PORT:-8080}:8080/tcp"          # Web Dashboard & Streaming
     volumes:
-      - ./data:/app/data                          # Root data volume
+      - ./data:/app/data                          # Root data volume (images, models, custom datasets)
       - ./data/images:/app/data/images            # Saved snapshots & capture archives
       - ./data/models:/app/data/models            # Vision & ML models
-      - ./data/tessdata:/app/data/tessdata        # Custom Tesseract OCR language datasets
-      - ./data/tessdata:/usr/share/tesseract-ocr/5/tessdata # System Tesseract tessdata sync
+      - ./data/tessdata:/app/data/tessdata        # Custom Tesseract OCR datasets (optional custom models)
     logging:
       driver: "json-file"
       options:

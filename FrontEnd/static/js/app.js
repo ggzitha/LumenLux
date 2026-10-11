@@ -917,6 +917,7 @@ function populateCameraResolutions(resolutions) {
         state.camera.resolution = resSelect.options[0]?.value || "1280x720";
         console.log(`[Camera Hardware] Clamped resolution to hardware maximum: ${state.camera.resolution}`);
     }
+    window.updateResetButtonsState?.();
 }
 
 function applyCameraList(cameras) {
@@ -948,6 +949,13 @@ function applyCameraList(cameras) {
 
         // Dynamically populate resolution dropdown strictly from connected camera hardware data!
         populateCameraResolutions(activeCam.resolutions);
+
+        // Auto-synchronize camera resolution with backend on initial discovery / boot
+        if (!initialResolutionSynced && state.camera.active_id) {
+            initialResolutionSynced = true;
+            console.log(`[Camera Hardware] Boot auto-syncing camera resolution: ${state.camera.resolution} on ${state.camera.active_id}`);
+            updateCameraSettings();
+        }
     } else {
         const opt = document.createElement("option");
         opt.value = "none";
@@ -1225,7 +1233,35 @@ function bindControlPair(sliderId, numId, ctrlName, autoId = null, autoCtrlName 
 
 async function resetCameraDefaults() {
     try {
-        showToast("Resetting camera controls to defaults...");
+        showToast("Resetting camera controls & resolution to defaults...");
+        const defRes = envDefaults.default_resolution || "1920x1080";
+        state.camera.resolution = defRes;
+        const resSelect = document.getElementById("resolutionSelect");
+        if (resSelect) {
+            for (let i = 0; i < resSelect.options.length; i++) {
+                if (resSelect.options[i].value === defRes) {
+                    resSelect.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        const fpsSelect = document.getElementById("fpsSelect");
+        if (fpsSelect) {
+            fpsSelect.value = "30";
+            state.camera.target_fps = 30;
+        }
+        const [w, h] = defRes.split("x").map(Number);
+        await fetch("/api/camera/select", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                camera_id: state.camera.active_id,
+                width: w,
+                height: h,
+                fps: 30
+            })
+        }).catch(() => { });
+
         const res = await fetch("/api/camera/reset_defaults", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1235,7 +1271,9 @@ async function resetCameraDefaults() {
         if (data.camera && data.camera.controls) {
             syncControlsUIFromData(data.camera.controls);
         }
-        showToast("Controls reset to defaults!");
+        saveConfig();
+        window.updateResetButtonsState?.();
+        showToast("Controls & resolution reset to defaults!");
     } catch (e) {
         showToast("Error resetting: " + e.message);
     }
@@ -1394,6 +1432,7 @@ function setupDirectShowControls() {
 
 let initialControlsSynced = false;
 let initialLightsSynced = false;
+let initialResolutionSynced = false;
 
 async function pollSystemStatus() {
     const start = performance.now();
@@ -1444,6 +1483,20 @@ async function pollSystemStatus() {
             if (!initialControlsSynced && data.camera && data.camera.controls) {
                 syncControlsUIFromData(data.camera.controls);
                 initialControlsSynced = true;
+            }
+
+            // Sync camera resolution if backend differs from state
+            if (data.camera && data.camera.resolution && state.camera.resolution) {
+                const [targetW, targetH] = state.camera.resolution.split("x").map(Number);
+                if (data.camera.resolution.width !== targetW || data.camera.resolution.height !== targetH) {
+                    if (!initialResolutionSynced) {
+                        console.log(`[Camera Hardware] Backend resolution (${data.camera.resolution.width}x${data.camera.resolution.height}) differs from configured default (${state.camera.resolution}). Synchronizing...`);
+                        initialResolutionSynced = true;
+                        updateCameraSettings();
+                    }
+                } else {
+                    initialResolutionSynced = true;
+                }
             }
 
             // Sync camera enabled hardware state
@@ -1657,6 +1710,724 @@ function setupMobileLedDrawer() {
 
 
 // --- OCR SECURITY PASSWORD AUTHENTICATION ---
+// ==========================================================================
+// OCR CALIBRATION STUDIO, PROJECTS MANAGER & FRIGATE-STYLE BOUNDING BOXES
+// ==========================================================================
+
+const ocrStudioState = {
+    unlocked: false,
+    active: false,
+    projects: [],
+    activeProjectId: null,
+    activeProject: null,
+    boxes: [], // [{ id, label, x, y, width, height, status, camera_type }]
+    isDraggingRoi: false,
+    isResizingRoi: false,
+    activeBoxId: null,
+    activeHandle: null,
+    dragStart: { clientX: 0, clientY: 0, boxX: 0, boxY: 0, boxW: 0, boxH: 0 }
+};
+
+let saveBoxesTimeout = null;
+function debouncedSaveRoiBoxes(delay = 600) {
+    if (!ocrStudioState.activeProjectId) return;
+    clearTimeout(saveBoxesTimeout);
+    saveBoxesTimeout = setTimeout(async () => {
+        try {
+            await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/boxes`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ boxes: ocrStudioState.boxes })
+            });
+            console.log("[OCR Studio] Bounding boxes saved for project:", ocrStudioState.activeProjectId);
+        } catch (e) {
+            console.error("[OCR Studio] Failed to save bounding boxes:", e);
+        }
+    }, delay);
+}
+
+function activateOcrStudio() {
+    ocrStudioState.unlocked = true;
+    ocrStudioState.active = true;
+    sessionStorage.setItem("lumen_ocr_active", "true");
+
+    const panel = document.getElementById("ocrProjectsPanel");
+    if (panel) {
+        panel.classList.remove("hidden");
+    }
+
+    const controlsCol = document.getElementById("dashboardControlsCol");
+    if (controlsCol) {
+        controlsCol.classList.add("ocr-active");
+    }
+
+    const btnOcr = document.getElementById("btnOcrCapture");
+    if (btnOcr) {
+        btnOcr.classList.add("unlocked");
+        btnOcr.classList.add("active");
+        btnOcr.setAttribute("title", "Click to Exit OCR Studio (Normal Mode)");
+    }
+
+    loadOcrProjects();
+    setupRoiInteractionHandlers();
+    renderRoiBoxes();
+}
+
+function deactivateOcrStudio(notify = true) {
+    ocrStudioState.active = false;
+    sessionStorage.setItem("lumen_ocr_active", "false");
+
+    const panel = document.getElementById("ocrProjectsPanel");
+    if (panel) {
+        panel.classList.add("hidden");
+    }
+
+    const controlsCol = document.getElementById("dashboardControlsCol");
+    if (controlsCol) {
+        controlsCol.classList.remove("ocr-active");
+    }
+
+    const btnOcr = document.getElementById("btnOcrCapture");
+    if (btnOcr) {
+        btnOcr.classList.remove("unlocked");
+        btnOcr.classList.remove("active");
+        btnOcr.setAttribute("title", "OCR Text Recognition");
+    }
+
+    // Clear ROI overlays from viewports in normal mode
+    const overlayChamber = document.getElementById("roiOverlayChamber");
+    const overlayDevice = document.getElementById("roiOverlayDevice");
+    if (overlayChamber) overlayChamber.innerHTML = "";
+    if (overlayDevice) overlayDevice.innerHTML = "";
+
+    if (notify) {
+        showToast("Exit OCR Studio (Normal Mode)");
+    }
+}
+
+function unlockOcrStudio() {
+    activateOcrStudio();
+}
+
+async function loadOcrProjects() {
+    const listContainer = document.getElementById("projectsListScrollable");
+    if (!listContainer) return;
+
+    try {
+        const res = await fetch("/api/ocr/projects");
+        const data = await res.json();
+        ocrStudioState.projects = Array.isArray(data) ? data : [];
+
+        // Restore active project from storage or default to first project
+        const savedActiveId = localStorage.getItem("lumen_active_ocr_project");
+        if (savedActiveId && ocrStudioState.projects.some(p => p.id === savedActiveId)) {
+            ocrStudioState.activeProjectId = savedActiveId;
+        } else if (ocrStudioState.projects.length > 0 && !ocrStudioState.activeProjectId) {
+            ocrStudioState.activeProjectId = ocrStudioState.projects[0].id;
+        }
+
+        renderProjectsList();
+
+        if (ocrStudioState.activeProjectId) {
+            await selectActiveProject(ocrStudioState.activeProjectId, false);
+        }
+    } catch (err) {
+        console.error("[OCR Studio] Failed to fetch projects:", err);
+        showToast("Error loading OCR projects: " + err.message);
+    }
+}
+
+function renderProjectsList() {
+    const listContainer = document.getElementById("projectsListScrollable");
+    if (!listContainer) return;
+
+    if (ocrStudioState.projects.length === 0) {
+        listContainer.innerHTML = `
+            <div class="projects-empty-state" id="projectsEmptyState">
+                <p>No calibration projects created yet. Click <strong>+ New Project</strong> above to name one (e.g. "PT.abc" or "Project01").</p>
+            </div>
+        `;
+        return;
+    }
+
+    listContainer.innerHTML = ocrStudioState.projects.map(p => {
+        const isActive = p.id === ocrStudioState.activeProjectId;
+        const snapCount = Array.isArray(p.snapshots) ? p.snapshots.length : 0;
+        const snapItems = snapCount > 0
+            ? p.snapshots.map(s => `
+                <li class="project-snapshot-item">
+                    <div class="snapshot-name-wrap" title="${s}">
+                        <span class="snapshot-lead">--</span>
+                        <span>${s}</span>
+                    </div>
+                    <a href="/api/ocr/projects/${p.id}/snapshots/${encodeURIComponent(s)}" target="_blank" class="snapshot-link-preview" title="View Full Snapshot">Preview</a>
+                </li>
+            `).join("")
+            : `<li class="project-snapshot-item" style="color: var(--text-muted); font-style: italic;">No snapshots captured yet. Capture snapshots using "Catch It!" to save into this folder.</li>`;
+
+        return `
+            <div class="project-accordion-item ${isActive ? 'is-active-project' : ''}" data-project-id="${p.id}">
+                <div class="project-item-header" data-toggle-accordion="${p.id}">
+                    <div class="project-header-left">
+                        <span class="project-accordion-arrow">▼</span>
+                        <span class="project-name-title" title="${p.name}">${p.name}</span>
+                        <span class="project-snap-count">(${snapCount} snapshots)</span>
+                    </div>
+                    <div class="project-header-right" onclick="event.stopPropagation()">
+                        <button type="button" class="btn-project-action btn-export" data-export-project="${p.id}" title="Run OCR & Export Excel (.xlsx)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                            </svg>
+                            <span>Export</span>
+                        </button>
+                        <button type="button" class="btn-project-action btn-delete" data-delete-project="${p.id}" title="Delete Project">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                            </svg>
+                            <span>Delete</span>
+                        </button>
+                        <label class="project-radio-label" title="Set as Active Project for snapshots">
+                            <input type="radio" name="active_ocr_project" value="${p.id}" class="project-radio-input" ${isActive ? 'checked' : ''} data-select-project="${p.id}">
+                            <span class="project-radio-custom"></span>
+                            <span class="project-radio-text">Active</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="project-item-body">
+                    <ul class="project-snapshots-list">
+                        ${snapItems}
+                    </ul>
+                </div>
+            </div>
+        `;
+    }).join("");
+
+    // Bind item header accordion click toggles
+    listContainer.querySelectorAll("[data-toggle-accordion]").forEach(header => {
+        header.addEventListener("click", () => {
+            const item = header.closest(".project-accordion-item");
+            if (item) item.classList.toggle("open");
+        });
+    });
+
+    // Bind radio active selection
+    listContainer.querySelectorAll("[data-select-project]").forEach(radio => {
+        radio.addEventListener("change", (e) => {
+            if (e.target.checked) {
+                selectActiveProject(e.target.value, true);
+            }
+        });
+    });
+
+    // Bind export button
+    listContainer.querySelectorAll("[data-export-project]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            exportProjectExcel(btn.getAttribute("data-export-project"));
+        });
+    });
+
+    // Bind delete button
+    listContainer.querySelectorAll("[data-delete-project]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            deleteProjectPrompt(btn.getAttribute("data-delete-project"));
+        });
+    });
+}
+
+async function selectActiveProject(projectId, notify = true) {
+    ocrStudioState.activeProjectId = projectId;
+    localStorage.setItem("lumen_active_ocr_project", projectId);
+
+    const activeBadge = document.getElementById("currentActiveProjectName");
+    const proj = ocrStudioState.projects.find(p => p.id === projectId);
+    if (activeBadge) {
+        activeBadge.textContent = proj ? proj.name : "None (Select below)";
+    }
+
+    // Update list card highlights
+    document.querySelectorAll(".project-accordion-item").forEach(el => {
+        const isCurrent = el.getAttribute("data-project-id") === projectId;
+        el.classList.toggle("is-active-project", isCurrent);
+        const radio = el.querySelector(".project-radio-input");
+        if (radio) radio.checked = isCurrent;
+    });
+
+    try {
+        const res = await fetch(`/api/ocr/projects/${projectId}`);
+        const data = await res.json();
+        ocrStudioState.activeProject = data;
+        ocrStudioState.boxes = Array.isArray(data.boxes) ? data.boxes : [];
+
+        // If newly created project has no boxes yet, generate starter template:
+        // 4 digital thermo boxes on Chamber, 1 standard thermo box on Device
+        if (ocrStudioState.boxes.length === 0) {
+            ocrStudioState.boxes = [
+                { id: "box_dev_std", label: "Standard (Fluke 1502A)", camera_type: "device", x: 0.25, y: 0.30, width: 0.50, height: 0.35, status: "success" },
+                { id: "box_ch_1", label: "Thermometer 01", camera_type: "chamber", x: 0.10, y: 0.18, width: 0.35, height: 0.30, status: "candidate" },
+                { id: "box_ch_2", label: "Thermometer 02", camera_type: "chamber", x: 0.55, y: 0.18, width: 0.35, height: 0.30, status: "candidate" },
+                { id: "box_ch_3", label: "Thermometer 03", camera_type: "chamber", x: 0.10, y: 0.55, width: 0.35, height: 0.30, status: "candidate" },
+                { id: "box_ch_4", label: "Thermometer 04", camera_type: "chamber", x: 0.55, y: 0.55, width: 0.35, height: 0.30, status: "candidate" }
+            ];
+            debouncedSaveRoiBoxes(200);
+        }
+
+        renderRoiBoxes();
+
+        if (notify && proj) {
+            showToast(`Active Project set to: "${proj.name}". Snapshots will save directly here.`);
+        }
+    } catch (err) {
+        console.error("[OCR Studio] Failed to load project details:", err);
+    }
+}
+
+function openNewProjectModal() {
+    const modal = document.getElementById("newProjectModal");
+    const input = document.getElementById("newProjectNameInput");
+    const errorMsg = document.getElementById("newProjectErrorMsg");
+    if (!modal) return;
+    if (errorMsg) {
+        errorMsg.textContent = "";
+        errorMsg.classList.remove("visible");
+    }
+    if (input) {
+        input.value = "";
+    }
+    modal.classList.add("active");
+    setTimeout(() => input?.focus(), 150);
+}
+
+function closeNewProjectModal() {
+    const modal = document.getElementById("newProjectModal");
+    if (!modal) return;
+    modal.classList.remove("active");
+}
+
+async function handleCreateNewProjectSubmit() {
+    const input = document.getElementById("newProjectNameInput");
+    const errorMsg = document.getElementById("newProjectErrorMsg");
+    const submitBtn = document.getElementById("btnSubmitNewProject");
+    const submitText = document.getElementById("newProjectSubmitText");
+    const spinner = document.getElementById("newProjectSpinner");
+
+    const name = (input?.value || "").trim();
+    if (!name) {
+        if (errorMsg) {
+            errorMsg.textContent = "Please provide a project name (e.g. 'PT.abc' or 'Project01').";
+            errorMsg.classList.add("visible");
+        }
+        input?.focus();
+        return;
+    }
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (submitText) submitText.style.display = "none";
+    if (spinner) spinner.style.display = "inline-block";
+    if (errorMsg) errorMsg.classList.remove("visible");
+
+    try {
+        const res = await fetch("/api/ocr/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.project) {
+            closeNewProjectModal();
+            showToast(`🎉 Project "${data.project.name}" created successfully!`);
+            await loadOcrProjects();
+            await selectActiveProject(data.project.id, true);
+
+            // Automatically expand the created project accordion
+            const createdItem = document.querySelector(`.project-accordion-item[data-project-id="${data.project.id}"]`);
+            if (createdItem) createdItem.classList.add("open");
+        } else {
+            if (errorMsg) {
+                errorMsg.textContent = data.error || "Failed to create project.";
+                errorMsg.classList.add("visible");
+            }
+        }
+    } catch (err) {
+        if (errorMsg) {
+            errorMsg.textContent = "Network error creating project: " + err.message;
+            errorMsg.classList.add("visible");
+        }
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+        if (submitText) submitText.style.display = "inline";
+        if (spinner) spinner.style.display = "none";
+    }
+}
+
+async function deleteProjectPrompt(projectId) {
+    const proj = ocrStudioState.projects.find(p => p.id === projectId);
+    const projName = proj ? proj.name : projectId;
+    const confirmed = confirm(`Are you sure you want to delete calibration project "${projName}"?\n\nThis will remove its saved configuration and snapshot list.`);
+    if (!confirmed) return;
+
+    try {
+        const res = await fetch(`/api/ocr/projects/${projectId}`, { method: "DELETE" });
+        if (res.ok) {
+            showToast(`Project "${projName}" deleted.`);
+            if (ocrStudioState.activeProjectId === projectId) {
+                ocrStudioState.activeProjectId = null;
+                localStorage.removeItem("lumen_active_ocr_project");
+            }
+            await loadOcrProjects();
+        } else {
+            const err = await res.json();
+            showToast("Failed to delete project: " + (err.error || res.statusText));
+        }
+    } catch (e) {
+        showToast("Error deleting project: " + e.message);
+    }
+}
+
+function exportProjectExcel(projectId) {
+    const proj = ocrStudioState.projects.find(p => p.id === projectId);
+    const name = proj ? proj.name : projectId;
+    showToast(`📊 Generating Excel report for "${name}" with embedded snapshots & OCR... Please wait.`);
+
+    // Trigger direct browser download
+    const link = document.createElement("a");
+    link.href = `/api/ocr/projects/${projectId}/export`;
+    link.download = `${name}_Calibration_Report.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// --------------------------------------------------------------------------
+// ROI BOUNDING BOX RENDERING & INTERACTIVE DRAG/RESIZE (FRIGATE-STYLE)
+// --------------------------------------------------------------------------
+
+function renderRoiBoxes() {
+    const overlayChamber = document.getElementById("roiOverlayChamber");
+    const overlayDevice = document.getElementById("roiOverlayDevice");
+
+    if (overlayChamber) overlayChamber.innerHTML = "";
+    if (overlayDevice) overlayDevice.innerHTML = "";
+
+    if (!ocrStudioState.active) {
+        return;
+    }
+
+    ocrStudioState.boxes.forEach((box) => {
+        const isDevice = box.camera_type === "device";
+        const container = isDevice ? overlayDevice : overlayChamber;
+        if (!container) return;
+
+        const boxEl = document.createElement("div");
+        boxEl.className = `roi-box status-${box.status || "candidate"}`;
+        boxEl.setAttribute("data-box-id", box.id);
+        boxEl.style.left = `${(box.x * 100).toFixed(2)}%`;
+        boxEl.style.top = `${(box.y * 100).toFixed(2)}%`;
+        boxEl.style.width = `${(box.width * 100).toFixed(2)}%`;
+        boxEl.style.height = `${(box.height * 100).toFixed(2)}%`;
+
+        const statusText = box.status === "success" ? "✓" : box.status === "error" ? "!" : box.status === "warning" ? "⚠" : "•";
+
+        boxEl.innerHTML = `
+            <div class="roi-box-label">
+                <span>${statusText} ${box.label || "Thermometer"}</span>
+                <button type="button" class="roi-box-delete-btn" title="Remove Box">✕</button>
+            </div>
+            <div class="roi-handle handle-nw" data-handle="nw"></div>
+            <div class="roi-handle handle-ne" data-handle="ne"></div>
+            <div class="roi-handle handle-se" data-handle="se"></div>
+            <div class="roi-handle handle-sw" data-handle="sw"></div>
+        `;
+
+        // Delete button listener
+        const btnDel = boxEl.querySelector(".roi-box-delete-btn");
+        btnDel?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            removeRoiBox(box.id);
+        });
+
+        container.appendChild(boxEl);
+    });
+}
+
+function removeRoiBox(boxId) {
+    ocrStudioState.boxes = ocrStudioState.boxes.filter(b => b.id !== boxId);
+    renderRoiBoxes();
+    debouncedSaveRoiBoxes(300);
+    showToast("Bounding box removed");
+}
+
+function addManualRoiBox(cameraType = "chamber", label = "Thermometer") {
+    if (!ocrStudioState.activeProjectId) {
+        showToast("Please create or select an Active Project first!");
+        return;
+    }
+
+    const existingCount = ocrStudioState.boxes.filter(b => b.camera_type === cameraType).length;
+    const boxNum = String(existingCount + 1).padStart(2, "0");
+    const fullLabel = cameraType === "device" && existingCount === 0
+        ? "Standard (Fluke 1502A)"
+        : `${label} ${boxNum}`;
+
+    const newBox = {
+        id: `box_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        label: fullLabel,
+        camera_type: cameraType,
+        x: 0.35,
+        y: 0.35,
+        width: 0.30,
+        height: 0.25,
+        status: "candidate"
+    };
+
+    ocrStudioState.boxes.push(newBox);
+    renderRoiBoxes();
+    debouncedSaveRoiBoxes(300);
+    showToast(`Added ${fullLabel}. Drag or resize box on ${cameraType === "device" ? "Device" : "Chamber"} camera.`);
+}
+
+function setupRoiInteractionHandlers() {
+    // Universal pointer events for mouse and touch dragging & resizing
+    const onPointerDown = (e) => {
+        const handle = e.target.closest(".roi-handle");
+        const boxEl = e.target.closest(".roi-box");
+        if (!boxEl) return;
+
+        const boxId = boxEl.getAttribute("data-box-id");
+        const box = ocrStudioState.boxes.find(b => b.id === boxId);
+        if (!box) return;
+
+        const container = boxEl.parentElement;
+        if (!container) return;
+
+        const cRect = container.getBoundingClientRect();
+        ocrStudioState.activeBoxId = boxId;
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        ocrStudioState.dragStart = {
+            clientX,
+            clientY,
+            containerW: cRect.width,
+            containerH: cRect.height,
+            boxX: box.x,
+            boxY: box.y,
+            boxW: box.width,
+            boxH: box.height
+        };
+
+        if (handle) {
+            ocrStudioState.isResizingRoi = true;
+            ocrStudioState.activeHandle = handle.getAttribute("data-handle");
+        } else {
+            ocrStudioState.isDraggingRoi = true;
+            ocrStudioState.activeHandle = null;
+        }
+
+        e.preventDefault();
+    };
+
+    const onPointerMove = (e) => {
+        if (!ocrStudioState.isDraggingRoi && !ocrStudioState.isResizingRoi) return;
+
+        const box = ocrStudioState.boxes.find(b => b.id === ocrStudioState.activeBoxId);
+        if (!box) return;
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        const dx = (clientX - ocrStudioState.dragStart.clientX) / ocrStudioState.dragStart.containerW;
+        const dy = (clientY - ocrStudioState.dragStart.clientY) / ocrStudioState.dragStart.containerH;
+
+        if (ocrStudioState.isDraggingRoi) {
+            // Move box
+            let newX = Math.max(0, Math.min(1 - box.width, ocrStudioState.dragStart.boxX + dx));
+            let newY = Math.max(0, Math.min(1 - box.height, ocrStudioState.dragStart.boxY + dy));
+            box.x = parseFloat(newX.toFixed(4));
+            box.y = parseFloat(newY.toFixed(4));
+        } else if (ocrStudioState.isResizingRoi) {
+            // Resize box via corner handle
+            const h = ocrStudioState.activeHandle;
+            let { boxX, boxY, boxW, boxH } = ocrStudioState.dragStart;
+
+            if (h === "se") {
+                box.width = Math.max(0.05, Math.min(1 - boxX, boxW + dx));
+                box.height = Math.max(0.05, Math.min(1 - boxY, boxH + dy));
+            } else if (h === "sw") {
+                const newW = Math.max(0.05, Math.min(boxX + boxW, boxW - dx));
+                box.x = boxX + (boxW - newW);
+                box.width = newW;
+                box.height = Math.max(0.05, Math.min(1 - boxY, boxH + dy));
+            } else if (h === "ne") {
+                const newH = Math.max(0.05, Math.min(boxY + boxH, boxH - dy));
+                box.y = boxY + (boxH - newH);
+                box.width = Math.max(0.05, Math.min(1 - boxX, boxW + dx));
+                box.height = newH;
+            } else if (h === "nw") {
+                const newW = Math.max(0.05, Math.min(boxX + boxW, boxW - dx));
+                const newH = Math.max(0.05, Math.min(boxY + boxH, boxH - dy));
+                box.x = boxX + (boxW - newW);
+                box.y = boxY + (boxH - newH);
+                box.width = newW;
+                box.height = newH;
+            }
+
+            box.x = parseFloat(Math.max(0, Math.min(1, box.x)).toFixed(4));
+            box.y = parseFloat(Math.max(0, Math.min(1, box.y)).toFixed(4));
+            box.width = parseFloat(box.width.toFixed(4));
+            box.height = parseFloat(box.height.toFixed(4));
+        }
+
+        renderRoiBoxes();
+        e.preventDefault();
+    };
+
+    const onPointerUp = () => {
+        if (ocrStudioState.isDraggingRoi || ocrStudioState.isResizingRoi) {
+            ocrStudioState.isDraggingRoi = false;
+            ocrStudioState.isResizingRoi = false;
+            ocrStudioState.activeBoxId = null;
+            ocrStudioState.activeHandle = null;
+            debouncedSaveRoiBoxes(200);
+        }
+    };
+
+    const overlayChamber = document.getElementById("roiOverlayChamber");
+    const overlayDevice = document.getElementById("roiOverlayDevice");
+
+    [overlayChamber, overlayDevice].forEach(overlay => {
+        if (!overlay) return;
+        overlay.addEventListener("mousedown", onPointerDown);
+        overlay.addEventListener("touchstart", onPointerDown, { passive: false });
+    });
+
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("touchmove", onPointerMove, { passive: false });
+    window.addEventListener("mouseup", onPointerUp);
+    window.addEventListener("touchend", onPointerUp);
+}
+
+// --------------------------------------------------------------------------
+// AUTOMATIC DIGITAL THERMOMETER DETECTION
+// --------------------------------------------------------------------------
+
+async function autoDetectDisplays() {
+    if (!ocrStudioState.activeProjectId) {
+        showToast("Please select an Active Project first!");
+        return;
+    }
+
+    const warningBanner = document.getElementById("ocrAnalogWarningBanner");
+    const warningText = document.getElementById("ocrAnalogWarningText");
+    if (warningBanner) warningBanner.classList.add("hidden");
+
+    // Capture current frame from chamber stream or device video
+    const canvas = document.createElement("canvas");
+    const chamberImg = document.getElementById("chamberStream");
+    const deviceVideo = document.getElementById("deviceCameraVideo");
+
+    let sourceW = 1280;
+    let sourceH = 720;
+    let ctx = canvas.getContext("2d");
+
+    if (chamberImg && chamberImg.complete && chamberImg.naturalWidth > 0) {
+        canvas.width = chamberImg.naturalWidth || 1280;
+        canvas.height = chamberImg.naturalHeight || 720;
+        ctx.drawImage(chamberImg, 0, 0, canvas.width, canvas.height);
+    } else if (deviceVideo && deviceVideo.videoWidth > 0) {
+        canvas.width = deviceVideo.videoWidth;
+        canvas.height = deviceVideo.videoHeight;
+        ctx.drawImage(deviceVideo, 0, 0, canvas.width, canvas.height);
+    } else {
+        showToast("Cannot detect: No camera feed is currently active.");
+        return;
+    }
+
+    const base64Data = canvas.toDataURL("image/jpeg", 0.90);
+    showToast("Analyzing frame for digital thermometer displays...");
+
+    try {
+        const res = await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/detect`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_base64: base64Data })
+        });
+        const data = await res.json();
+
+        if (!data.is_digital || data.is_unsupported || data.is_analog) {
+            // Non-digital / unsupported thermometer detected warning!
+            if (warningBanner) {
+                const warningTitle = document.getElementById("ocrWarningTitle");
+                if (warningTitle) {
+                    if (data.unsupported_type === "mercury_glass") {
+                        warningTitle.textContent = "Mercury-in-Glass Thermometer Detected:";
+                    } else if (data.unsupported_type === "analog_dial") {
+                        warningTitle.textContent = "Analog Dial Meter Detected:";
+                    } else if (data.unsupported_type === "plastic_strip") {
+                        warningTitle.textContent = "Plastic Strip Thermometer Detected:";
+                    } else {
+                        warningTitle.textContent = "No Digital Display Detected:";
+                    }
+                }
+                if (warningText) {
+                    warningText.textContent = data.message || "Only digital thermometers with active numeric displays (LCD/VFD/LED) are supported. Mercury-in-glass, analog dials, and plastic strips are not supported.";
+                }
+                warningBanner.classList.remove("hidden");
+            }
+            showToast("⚠️ " + (data.message || "Unsupported non-digital instrument! Only digital LCD/LED displays supported."));
+            return;
+        }
+
+        if (data.boxes && data.boxes.length > 0) {
+            ocrStudioState.boxes = data.boxes;
+            renderRoiBoxes();
+            debouncedSaveRoiBoxes(100);
+            showToast(`✅ Auto-detected ${data.detected_count || data.boxes.length} digital displays! You can drag boxes to fine-tune.`);
+        } else {
+            showToast("No digital displays recognized in current frame. Add boxes manually with '+ Box'.");
+        }
+    } catch (e) {
+        console.error("Auto detect failed:", e);
+        showToast("Auto detection error: " + e.message);
+    }
+}
+
+// --------------------------------------------------------------------------
+// AUTOMATIC SNAPSHOT SAVE INTO ACTIVE PROJECT FOLDER
+// --------------------------------------------------------------------------
+
+async function saveSnapshotToActiveProject(canvas, filename) {
+    if (!ocrStudioState.activeProjectId) return;
+    try {
+        const base64Data = canvas.toDataURL("image/jpeg", 0.95);
+        const res = await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/save_snapshot`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                image_base64: base64Data,
+                filename: filename
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const proj = ocrStudioState.projects.find(p => p.id === ocrStudioState.activeProjectId);
+            const projName = proj ? proj.name : ocrStudioState.activeProjectId;
+            console.log(`[OCR Studio] Snapshot saved to project "${projName}": ${filename}`);
+            showToast(`📁 Snapshot saved to project "${projName}"`);
+            await loadOcrProjects();
+        }
+    } catch (err) {
+        console.warn("[OCR Studio] Could not save snapshot to project folder:", err);
+    }
+}
+
+// --------------------------------------------------------------------------
+// OCR AUTHENTICATION & UI WIRING
+// --------------------------------------------------------------------------
+
 function setupOcrAuth() {
     const btnOcr = document.getElementById("btnOcrCapture");
     const modal = document.getElementById("ocrAuthModal");
@@ -1672,18 +2443,16 @@ function setupOcrAuth() {
     const spinner = document.getElementById("ocrSpinner");
     const modalContent = modal?.querySelector(".ocr-modal-card");
 
-    // Check if already authenticated in this session
-    if (sessionStorage.getItem("lumen_ocr_authenticated") === "true") {
-        btnOcr?.classList.add("unlocked");
-        btnOcr?.setAttribute("title", "OCR Feature Unlocked (Active)");
+    // Check if user was previously active in OCR studio during this session
+    const openOcrQuery = new URLSearchParams(window.location.search).has("open_ocr");
+    if (sessionStorage.getItem("lumen_ocr_authenticated") === "true" && (openOcrQuery || sessionStorage.getItem("lumen_ocr_active") === "true")) {
+        activateOcrStudio();
+    } else {
+        deactivateOcrStudio(false);
     }
 
     function openModal() {
         if (!modal) return;
-        if (sessionStorage.getItem("lumen_ocr_authenticated") === "true") {
-            showToast("🔓 OCR Access is already unlocked for this session");
-            return;
-        }
         if (errorMsg) {
             errorMsg.textContent = "";
             errorMsg.classList.remove("visible");
@@ -1702,9 +2471,19 @@ function setupOcrAuth() {
         if (errorMsg) errorMsg.classList.remove("visible");
     }
 
+    // Toggle OCR Studio: clicking again exits to normal mode
     btnOcr?.addEventListener("click", (e) => {
         e.preventDefault();
-        openModal();
+        if (ocrStudioState.active) {
+            deactivateOcrStudio(true);
+        } else {
+            if (sessionStorage.getItem("lumen_ocr_authenticated") === "true") {
+                activateOcrStudio();
+                showToast("🔍 OCR Studio Active. Click 'OCR Studio' to exit.");
+            } else {
+                openModal();
+            }
+        }
     });
 
     btnCancel?.addEventListener("click", closeModal);
@@ -1745,7 +2524,6 @@ function setupOcrAuth() {
             return;
         }
 
-        // Set loading state
         if (btnSubmit) btnSubmit.disabled = true;
         if (submitText) submitText.style.display = "none";
         if (spinner) spinner.style.display = "inline-block";
@@ -1761,10 +2539,14 @@ function setupOcrAuth() {
 
             if (res.ok && data.success) {
                 sessionStorage.setItem("lumen_ocr_authenticated", "true");
-                btnOcr?.classList.add("unlocked");
-                btnOcr?.setAttribute("title", "OCR Feature Unlocked (Active)");
                 closeModal();
-                showToast("🔓 OCR Access Granted! Text recognition module unlocked.");
+                showToast("🔓 OCR Access Granted! Calibration Studio unlocked.");
+                activateOcrStudio();
+
+                const panel = document.getElementById("ocrProjectsPanel");
+                if (panel) {
+                    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
             } else {
                 if (errorMsg) {
                     errorMsg.textContent = data.error || "Invalid password. Access denied.";
@@ -1785,6 +2567,49 @@ function setupOcrAuth() {
             if (btnSubmit) btnSubmit.disabled = false;
             if (submitText) submitText.style.display = "inline";
             if (spinner) spinner.style.display = "none";
+        }
+    });
+
+    // Wire OCR Panel Collapsible & Action Buttons
+    const btnNewProj = document.getElementById("btnCreateProjectPrompt");
+    btnNewProj?.addEventListener("click", openNewProjectModal);
+
+    const btnCloseNewModal = document.getElementById("btnCloseNewProjectModal");
+    const btnCancelNew = document.getElementById("btnCancelNewProject");
+    btnCloseNewModal?.addEventListener("click", closeNewProjectModal);
+    btnCancelNew?.addEventListener("click", closeNewProjectModal);
+
+    const formNewProj = document.getElementById("newProjectForm");
+    formNewProj?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        handleCreateNewProjectSubmit();
+    });
+
+    const collapseBtn = document.getElementById("collapseOcrPanel");
+    const panelContent = document.getElementById("ocrPanelContent");
+    collapseBtn?.addEventListener("click", () => {
+        const isCollapsed = panelContent?.classList.toggle("collapsed");
+        collapseBtn.classList.toggle("collapsed", isCollapsed);
+    });
+
+    const btnAutoDetect = document.getElementById("btnAutoDetectRoi");
+    btnAutoDetect?.addEventListener("click", autoDetectDisplays);
+
+    const btnAddChamber = document.getElementById("btnAddChamberBox");
+    btnAddChamber?.addEventListener("click", () => addManualRoiBox("chamber", "Thermometer"));
+
+    const btnAddDevice = document.getElementById("btnAddDeviceBox");
+    btnAddDevice?.addEventListener("click", () => addManualRoiBox("device", "Standard (Fluke 1502A)"));
+
+    const btnClearBoxes = document.getElementById("btnClearAllBoxes");
+    btnClearBoxes?.addEventListener("click", () => {
+        if (!ocrStudioState.activeProjectId) return;
+        const confirmClear = confirm("Clear all bounding boxes for current active project?");
+        if (confirmClear) {
+            ocrStudioState.boxes = [];
+            renderRoiBoxes();
+            debouncedSaveRoiBoxes(100);
+            showToast("Bounding boxes cleared.");
         }
     });
 
@@ -1834,8 +2659,21 @@ function setupResetToDefaults() {
         if (spinner) spinner.style.display = "inline-block";
 
         try {
-            // Reset hardware controls on Pi camera to factory defaults
+            // Reset hardware controls on Pi camera to factory defaults and restore default 1080p resolution
             if (state.camera.active_id) {
+                const defRes = envDefaults.default_resolution || "1920x1080";
+                const [w, h] = defRes.split("x").map(Number);
+                await fetch("/api/camera/select", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        camera_id: state.camera.active_id,
+                        width: w,
+                        height: h,
+                        fps: 30
+                    })
+                }).catch(() => { });
+
                 await fetch("/api/camera/reset_defaults", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -2447,6 +3285,11 @@ function downloadCanvasImage(canvas, filename) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }, "image/jpeg", 0.95);
+
+    // If an OCR Calibration Project is currently active, also save this snapshot into its directory
+    if (typeof ocrStudioState !== "undefined" && ocrStudioState.activeProjectId) {
+        saveSnapshotToActiveProject(canvas, filename);
+    }
 }
 
 function drawTwibbonBackground(ctx, totalWidth, totalHeight, border, timestampStr) {

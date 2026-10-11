@@ -233,6 +233,13 @@ body {
     /* Both sections have the exact same height on desktop */
 }
 
+.dashboard-controls-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    min-height: 0;
+}
+
 /* Desktop Panel Equal Height & Zero Scrollbar Sizing (100% Full-Page Zero-Scroll Layout) */
 @media (min-width: 861px) and (orientation: landscape) {
 
@@ -298,6 +305,18 @@ body {
         margin-top: 0.25rem !important;
     }
 
+    .dashboard-controls-col {
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.65rem !important;
+        padding-right: 2px !important;
+    }
+
+    /* By default (OCR panel inactive / hidden): lights-panel matches camera-panel height exactly */
     .lights-panel {
         display: flex;
         flex-direction: column;
@@ -306,7 +325,37 @@ body {
         overflow-x: hidden !important;
         height: 100% !important;
         max-height: 100% !important;
+        flex: 1 1 100% !important;
         padding: 0.75rem 1rem !important;
+        transition: flex 0.25s ease, height 0.25s ease;
+    }
+
+    /* When OCR Studio panel is active: lights-panel shortens (memendek) with inner scroll */
+    .dashboard-controls-col.ocr-active .lights-panel,
+    .dashboard-controls-col:has(.ocr-projects-panel:not(.hidden)) .lights-panel {
+        height: auto !important;
+        max-height: none !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+    }
+
+    .dashboard-controls-col.ocr-active .lights-panel::-webkit-scrollbar,
+    .dashboard-controls-col:has(.ocr-projects-panel:not(.hidden)) .lights-panel::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .dashboard-controls-col.ocr-active .lights-panel::-webkit-scrollbar-thumb,
+    .dashboard-controls-col:has(.ocr-projects-panel:not(.hidden)) .lights-panel::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.15);
+        border-radius: 3px;
+    }
+
+    .dashboard-controls-col.ocr-active .ocr-projects-panel,
+    .dashboard-controls-col:has(.ocr-projects-panel:not(.hidden)) .ocr-projects-panel {
+        flex: 0 0 auto !important;
+        max-height: 280px !important;
     }
 
     .lights-panel .panel-header {
@@ -528,6 +577,10 @@ body {
 
     .dashboard-container::-webkit-scrollbar {
         display: none !important;
+    }
+
+    .dashboard-controls-col {
+        display: contents !important;
     }
 
     /* Off-Canvas Hamburger Drawer for LED Settings */
@@ -2635,3 +2688,596 @@ input:checked+.switch-slider:before {
     background: rgba(16, 185, 129, 0.12) !important;
     box-shadow: 0 0 12px rgba(16, 185, 129, 0.25) !important;
 }
+
+/* ==========================================================================
+   OCR CALIBRATION STUDIO & PROJECTS PANEL (Spawned below Lights Panel)
+   ========================================================================== */
+.ocr-projects-panel {
+    margin-top: 0;
+    padding: 0.5rem 0.75rem;
+    border-color: rgba(14, 165, 233, 0.28);
+    background: linear-gradient(135deg, rgba(8, 14, 28, 0.78) 0%, rgba(13, 22, 40, 0.75) 100%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 16px rgba(14, 165, 233, 0.1);
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+
+.ocr-projects-panel.hidden {
+    display: none !important;
+}
+
+.ocr-projects-panel .panel-header {
+    margin-bottom: 0.25rem;
+    padding-bottom: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.ocr-projects-panel .panel-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ocr-projects-panel .panel-icon-badge {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ocr-projects-panel .panel-icon-badge svg {
+    width: 15px;
+    height: 15px;
+}
+
+.ocr-projects-panel .panel-title {
+    font-size: 0.86rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ocr-projects-panel .panel-subtitle {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.btn-add-project {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, var(--neon-cyan), var(--neon-blue));
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.btn-add-project:hover {
+    box-shadow: 0 0 14px rgba(0, 242, 254, 0.55);
+    transform: translateY(-1px);
+}
+
+.ocr-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.2rem 0;
+}
+
+.ocr-panel-content.collapsed {
+    display: none !important;
+}
+
+.panel-collapse-btn.collapsed .chevron-icon {
+    transform: rotate(180deg);
+}
+
+/* Active Project Bar & ROI Quick Actions */
+.ocr-toolbar-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(6, 10, 20, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+
+.ocr-active-project-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.active-proj-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    min-width: 0;
+}
+
+.active-proj-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.74rem;
+}
+
+.active-proj-name {
+    color: var(--neon-cyan);
+    font-weight: 700;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.76rem;
+    padding: 1px 7px;
+    background: rgba(14, 165, 233, 0.15);
+    border: 1px solid rgba(14, 165, 233, 0.3);
+    border-radius: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.ocr-roi-quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-roi-tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-roi-tool:hover {
+    background: rgba(14, 165, 233, 0.15);
+    border-color: rgba(14, 165, 233, 0.4);
+    color: var(--neon-cyan);
+}
+
+.btn-roi-clear:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--neon-red);
+}
+
+/* Analog Dial Warning Banner */
+.ocr-analog-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 4px;
+    color: var(--neon-amber);
+    font-size: 0.72rem;
+    line-height: 1.3;
+    animation: fadeIn 0.3s ease;
+}
+
+.ocr-analog-warning.hidden {
+    display: none !important;
+}
+
+.ocr-warning-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+/* Projects Scrollable Accordion List */
+.projects-list-container {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    background: rgba(6, 10, 20, 0.4);
+    overflow: hidden;
+}
+
+.projects-list-scrollable {
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.projects-list-scrollable::-webkit-scrollbar {
+    width: 4px;
+}
+
+.projects-list-scrollable::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.projects-list-scrollable::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+}
+
+.projects-empty-state {
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.74rem;
+}
+
+/* Project Accordion Item */
+.project-accordion-item {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    background: rgba(12, 18, 32, 0.7);
+    transition: var(--transition);
+    overflow: hidden;
+}
+
+.project-accordion-item:hover {
+    border-color: rgba(14, 165, 233, 0.3);
+}
+
+.project-accordion-item.is-active-project {
+    border-color: rgba(14, 165, 233, 0.6);
+    box-shadow: 0 0 10px rgba(14, 165, 233, 0.18);
+}
+
+.project-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.project-header-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.project-accordion-arrow {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    transition: transform 0.25s ease;
+}
+
+.project-accordion-item.open .project-accordion-arrow {
+    transform: rotate(180deg);
+}
+
+.project-name-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.project-snap-count {
+    font-size: 0.66rem;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 5px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
+.project-header-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.btn-project-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 6px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: var(--transition);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+}
+
+.btn-project-action.btn-export:hover {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: var(--neon-green);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
+}
+
+.btn-project-action.btn-delete:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--neon-red);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.2);
+}
+
+/* Custom Radio Button for Project Active Select */
+.project-radio-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 2px 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    user-select: none;
+    transition: var(--transition);
+}
+
+.project-radio-label:hover {
+    border-color: rgba(14, 165, 233, 0.4);
+}
+
+.project-radio-input {
+    display: none;
+}
+
+.project-radio-custom {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-muted);
+    position: relative;
+    transition: var(--transition);
+}
+
+.project-radio-input:checked + .project-radio-custom {
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 6px rgba(0, 242, 254, 0.5);
+}
+
+.project-radio-input:checked + .project-radio-custom::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    background: var(--neon-cyan);
+    border-radius: 50%;
+}
+
+.project-radio-input:checked ~ .project-radio-text {
+    color: var(--neon-cyan);
+    font-weight: 700;
+}
+
+/* Project Accordion Body (Snapshots List) */
+.project-item-body {
+    display: none;
+    padding: 6px 8px;
+    background: rgba(6, 10, 20, 0.5);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.project-accordion-item.open .project-item-body {
+    display: block;
+}
+
+.project-snapshots-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 110px;
+    overflow-y: auto;
+}
+
+.project-snapshot-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.02);
+    font-family: monospace, sans-serif;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    transition: var(--transition);
+}
+
+.project-snapshot-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.snapshot-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.snapshot-lead {
+    color: var(--neon-cyan);
+    font-weight: bold;
+}
+
+.snapshot-link-preview {
+    color: var(--neon-cyan);
+    text-decoration: none;
+    font-size: 0.68rem;
+    padding: 1px 5px;
+    background: rgba(14, 165, 233, 0.1);
+    border-radius: 3px;
+    transition: var(--transition);
+}
+
+.snapshot-link-preview:hover {
+    background: rgba(14, 165, 233, 0.25);
+    text-decoration: underline;
+}
+
+/* ==========================================================================
+   INTERACTIVE ROI BOUNDING BOX OVERLAYS (Frigate Style)
+   ========================================================================== */
+.roi-overlay-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 25;
+    overflow: hidden;
+}
+
+.roi-box {
+    position: absolute;
+    pointer-events: auto;
+    border: 2px solid;
+    border-radius: 4px;
+    box-sizing: border-box;
+    cursor: move;
+    user-select: none;
+    touch-action: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Status colors requested by user */
+/* Light grey: Progress detection / candidate */
+.roi-box.status-candidate {
+    border-color: #9ca3af;
+    background: rgba(156, 163, 175, 0.15);
+    box-shadow: 0 0 10px rgba(156, 163, 175, 0.35);
+}
+
+.roi-box.status-candidate .roi-box-label {
+    background: #9ca3af;
+    color: #111827;
+}
+
+/* Red: Low Accuracy */
+.roi-box.status-error {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.18);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+}
+
+.roi-box.status-error .roi-box-label {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* Yellow: Readable with error */
+.roi-box.status-warning {
+    border-color: #eab308;
+    background: rgba(234, 179, 8, 0.18);
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.45);
+}
+
+.roi-box.status-warning .roi-box-label {
+    background: #eab308;
+    color: #111827;
+}
+
+/* Green: Perfect readable */
+.roi-box.status-success {
+    border-color: #10b981;
+    background: rgba(16, 185, 129, 0.18);
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+}
+
+.roi-box.status-success .roi-box-label {
+    background: #10b981;
+    color: #07090e;
+}
+
+/* ROI Box Header / Label */
+.roi-box-label {
+    position: absolute;
+    top: -22px;
+    left: -2px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 3px 3px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    pointer-events: auto;
+    line-height: 1.2;
+}
+
+.roi-box-delete-btn {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.8;
+    transition: opacity 0.15s;
+}
+
+.roi-box-delete-btn:hover {
+    opacity: 1;
+    transform: scale(1.2);
+}
+
+/* ROI Resize Handles (Corners) */
+.roi-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border: 1px solid #111;
+    border-radius: 2px;
+    pointer-events: auto;
+    z-index: 26;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+}
+
+.roi-handle.handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.roi-handle.handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.roi-handle.handle-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.roi-handle.handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }

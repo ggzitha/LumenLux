@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=4.2">
+    <link rel="stylesheet" href="/static/css/main.css?v=5.2">
 </head>
 
 <body>
@@ -136,6 +136,8 @@
                     <!-- Viewport Screen -->
                     <div class="viewport-card" id="viewportCard">
                         <img id="cameraStream" class="viewport-stream" src="/stream" alt="Live Camera Stream">
+                        <!-- Interactive ROI Bounding Boxes Layer (Chamber Camera) -->
+                        <div class="roi-overlay-layer" id="roiOverlayChamber"></div>
 
                         <!-- Viewport Top Badges & Mobile Settings Trigger -->
                         <div class="viewport-overlay-top">
@@ -653,7 +655,19 @@
                                         </div>
 
                                         <div class="field-group">
-                                            <label class="field-label" for="resolutionSelect">Stream Resolution</label>
+                                            <div
+                                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                                <label class="field-label" for="resolutionSelect" style="margin: 0;">Stream Resolution</label>
+                                                <button type="button" class="btn-setting-reset" data-target="resolutionSelect"
+                                                    data-default="{{ app_defaults.default_resolution }}" title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
+                                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                        stroke-linejoin="round">
+                                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                        <path d="M3 3v5h5" />
+                                                    </svg>
+                                                </button>
+                                            </div>
                                             <select id="resolutionSelect" class="select-custom">
                                                 <option value="detecting">Loading camera hardware resolutions...
                                                 </option>
@@ -771,6 +785,9 @@
                     <div class="viewport-card" id="deviceViewportCard">
                         <video id="deviceCameraVideo" class="viewport-stream" autoplay playsinline muted></video>
 
+                        <!-- Interactive ROI Overlay for Digital Thermometer Displays (Standard Reference) -->
+                        <div class="roi-overlay-layer" id="roiOverlayDevice"></div>
+
                         <!-- Standby Overlay -->
                         <div class="device-standby-overlay" id="deviceStandbyOverlay">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" opacity="0.6">
@@ -834,7 +851,19 @@
                                     </select>
                                 </div>
                                 <div class="field-group" style="margin-bottom: 12px;">
-                                    <label class="field-label" for="deviceResSelect">Resolution Target</label>
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                        <label class="field-label" for="deviceResSelect" style="margin: 0;">Resolution Target</label>
+                                        <button type="button" class="btn-setting-reset" data-target="deviceResSelect"
+                                            data-default="{{ app_defaults.default_resolution }}" title="Reset Resolution to default ({{ app_defaults.default_resolution }})">
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                                <path d="M3 3v5h5" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                     <select id="deviceResSelect" class="select-custom">
                                         <option value="1920x1080" selected>1920 x 1080 (Full HD 16:9)</option>
                                         <option value="1280x720">1280 x 720 (HD 720p 16:9)</option>
@@ -1126,9 +1155,10 @@
         </section>
 
 
-        <!-- RIGHT COLUMN: WS2812B Light Studio -->
-        <section class="glass-panel lights-panel {% if request.query_params.get('open_led') %}mobile-open{% endif %}"
-            id="lightsPanel">
+        <!-- RIGHT COLUMN: WS2812B Light Studio & OCR Calibration Studio -->
+        <div class="dashboard-controls-col" id="dashboardControlsCol">
+            <section class="glass-panel lights-panel {% if request.query_params.get('open_led') %}mobile-open{% endif %}"
+                id="lightsPanel">
             <div class="panel-header">
                 <h2 class="panel-title">
                     <svg viewBox="0 0 24 24">
@@ -1376,6 +1406,91 @@
             </div>
         </section>
 
+        <!-- OCR Calibration Studio & Projects Panel (Spawned below Lights Panel upon unlock) -->
+        <section class="glass-panel ocr-projects-panel hidden" id="ocrProjectsPanel">
+            <div class="panel-header">
+                <div class="panel-title-wrap">
+                    <div class="panel-icon-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-2h6v2zm4-4H6v-2h10v2zm0-4H6V7h10v2z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="panel-title">OCR Calibration Studio</h2>
+                        <p class="panel-subtitle">Multi-thermometer display detection, interactive bounding boxes & Excel export</p>
+                    </div>
+                </div>
+                <div class="ocr-header-actions" style="display: flex; gap: 8px; align-items: center;">
+                    <button type="button" class="btn-panel-action btn-add-project" id="btnCreateProjectPrompt" title="Create New Project">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        <span>+ New Project</span>
+                    </button>
+                    <button class="panel-collapse-btn" id="collapseOcrPanel" type="button" title="Toggle Projects Panel">
+                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="panel-content ocr-panel-content" id="ocrPanelContent">
+                <!-- Active Project Banner & ROI Toolbar -->
+                <div class="ocr-toolbar-card">
+                    <div class="ocr-active-project-bar">
+                        <div class="active-proj-info">
+                            <span class="active-proj-label">Active Project:</span>
+                            <span class="active-proj-name" id="currentActiveProjectName">None (Select radio below)</span>
+                        </div>
+                        <div class="ocr-roi-quick-actions">
+                            <button type="button" class="btn-roi-tool" id="btnAutoDetectRoi" title="Auto-detect digital thermometers in chamber/device frame">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                                </svg>
+                                <span>Auto-Detect</span>
+                            </button>
+                            <button type="button" class="btn-roi-tool" id="btnAddChamberBox" title="Add manual ROI bounding box to Raspberry Pi Chamber">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                <span>+ Box Chamber</span>
+                            </button>
+                            <button type="button" class="btn-roi-tool" id="btnAddDeviceBox" title="Add manual ROI bounding box to Device Camera (Standard)">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                <span>+ Box Standard</span>
+                            </button>
+                            <button type="button" class="btn-roi-tool btn-roi-clear" id="btnClearAllBoxes" title="Clear bounding boxes for active project">
+                                <span>Clear Boxes</span>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Non-Digital / Unsupported Instrument Warning Banner -->
+                    <div id="ocrAnalogWarningBanner" class="ocr-analog-warning hidden">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                        </svg>
+                        <div class="ocr-warning-content">
+                            <strong id="ocrWarningTitle">Unsupported Non-Digital Instrument:</strong>
+                            <span id="ocrAnalogWarningText">Only digital thermometers with active numeric displays (LCD/VFD/LED) are supported. Mercury-in-glass, analog dials, and plastic strips are not supported.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Projects List Header & Scrollable List -->
+                <div class="projects-list-container">
+                    <div class="projects-list-scrollable" id="projectsListScrollable">
+                        <div class="projects-empty-state" id="projectsEmptyState">
+                            <p>No calibration projects created yet. Click <strong>+ New Project</strong> above to create one (e.g. "PT.abc" or "Project01").</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        </div>
+
     </main>
 
     <!-- OCR Security Authentication Modal -->
@@ -1459,6 +1574,40 @@
         </div>
     </div>
 
+    <!-- New OCR Project Modal Dialog -->
+    <div class="ocr-modal-backdrop" id="newProjectModal">
+        <div class="ocr-modal-card">
+            <div class="ocr-modal-header">
+                <div class="ocr-modal-title">
+                    <div class="ocr-modal-icon" style="background: rgba(14, 165, 233, 0.15); color: var(--neon-cyan); border-color: rgba(14, 165, 233, 0.3);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3>Create Calibration Project</h3>
+                        <p>Name your project (e.g. "PT.abc", "Project01")</p>
+                    </div>
+                </div>
+                <button type="button" class="ocr-modal-close" id="btnCloseNewProjectModal" title="Close">✕</button>
+            </div>
+            <form id="newProjectForm" class="ocr-modal-body" autocomplete="off" onsubmit="return false;">
+                <div class="ocr-input-group">
+                    <label for="newProjectNameInput">Project Name</label>
+                    <input type="text" id="newProjectNameInput" class="ocr-input" placeholder="e.g. PT.abc or Project01" required>
+                    <div class="ocr-error-msg" id="newProjectErrorMsg"></div>
+                </div>
+                <div class="ocr-modal-actions">
+                    <button type="button" class="btn-ocr-cancel" id="btnCancelNewProject">Cancel</button>
+                    <button type="submit" class="btn-ocr-submit" id="btnSubmitNewProject">
+                        <span id="newProjectSubmitText">Create Project</span>
+                        <div class="ocr-spinner" id="newProjectSpinner" style="display: none;"></div>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
@@ -1467,7 +1616,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=4.7"></script>
+    <script src="/static/js/app.js?v=5.2"></script>
 </body>
 
 </html>
