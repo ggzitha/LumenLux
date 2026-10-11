@@ -3358,18 +3358,54 @@ input[type="number"] {
 /* ROI Box Header / Label */
 .roi-box-label {
     position: absolute;
-    top: -22px;
+    top: -24px;
     left: -2px;
     padding: 2px 6px;
     font-size: 10px;
     font-weight: 700;
-    border-radius: 3px 3px 0 0;
+    border-radius: 4px 4px 0 0;
     display: flex;
     align-items: center;
     gap: 5px;
     white-space: nowrap;
     pointer-events: auto;
     line-height: 1.2;
+    z-index: 30;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.roi-test-btn {
+    background: rgba(14, 165, 233, 0.3);
+    border: 1px solid rgba(14, 165, 233, 0.7);
+    color: #fff;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    cursor: pointer;
+    transition: 0.15s;
+    line-height: 1.1;
+}
+
+.roi-test-btn:hover {
+    background: rgba(14, 165, 233, 0.6);
+    box-shadow: 0 0 6px rgba(14, 165, 233, 0.6);
+}
+
+.roi-mode-btn {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    cursor: pointer;
+    line-height: 1.1;
+}
+
+.roi-mode-btn:hover {
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .roi-box-delete-btn {
@@ -3389,7 +3425,7 @@ input[type="number"] {
     transform: scale(1.2);
 }
 
-/* ROI Resize Handles (Corners) */
+/* ROI Resize Handles (Corners for Rect mode) */
 .roi-handle {
     position: absolute;
     width: 10px;
@@ -3406,3 +3442,179 @@ input[type="number"] {
 .roi-handle.handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
 .roi-handle.handle-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
 .roi-handle.handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+
+/* SVG Polygon Overlay Layer (Trapezoid / Free Quad Mode) */
+.roi-svg-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 23;
+}
+
+.roi-poly {
+    pointer-events: auto;
+    cursor: move;
+    stroke-width: 2.2;
+    transition: fill 0.15s, stroke 0.15s;
+}
+
+.roi-poly.status-candidate {
+    fill: rgba(156, 163, 175, 0.14);
+    stroke: #9ca3af;
+}
+
+.roi-poly.status-success {
+    fill: rgba(16, 185, 129, 0.18);
+    stroke: #10b981;
+    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.5));
+}
+
+.roi-poly.status-warning {
+    fill: rgba(234, 179, 8, 0.18);
+    stroke: #eab308;
+    filter: drop-shadow(0 0 8px rgba(234, 179, 8, 0.5));
+}
+
+.roi-poly.status-error {
+    fill: rgba(239, 68, 68, 0.18);
+    stroke: #ef4444;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.5));
+}
+
+/* 4-Corner Draggable Pins (Trapezoid / Skew Perspective Mode) */
+.roi-pin {
+    position: absolute;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 2.5px solid #0f172a;
+    transform: translate(-50%, -50%);
+    cursor: grab;
+    pointer-events: auto;
+    z-index: 29;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.roi-pin:hover {
+    transform: translate(-50%, -50%) scale(1.35);
+    cursor: grabbing;
+}
+
+.roi-pin.status-candidate {
+    border-color: #9ca3af;
+    box-shadow: 0 0 6px rgba(156, 163, 175, 0.5);
+}
+
+.roi-pin.status-success {
+    border-color: #10b981;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
+}
+
+.roi-pin.status-warning {
+    border-color: #eab308;
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.8);
+}
+
+.roi-pin.status-error {
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.8);
+}
+
+/* Pin Index Indicator */
+.roi-pin::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: #0f172a;
+    opacity: 0.7;
+}
+
+/* Instant OCR Test Preview Modal Styles */
+.roi-test-preview-wrap {
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+}
+
+.roi-test-crop-label {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    text-align: left;
+    font-weight: 600;
+}
+
+.roi-test-img-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 80px;
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.roi-test-crop-img {
+    max-width: 100%;
+    max-height: 160px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.roi-test-data-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.roi-test-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+}
+
+.roi-test-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.roi-test-val-badge {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #10b981;
+    font-family: 'JetBrains Mono', monospace;
+    text-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+}
+
+.roi-test-raw-text {
+    font-family: monospace;
+    font-size: 0.76rem;
+    color: var(--text-primary);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.roi-test-badge {
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}

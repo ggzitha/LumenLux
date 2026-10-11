@@ -389,22 +389,279 @@ def _fallback_default_boxes() -> Dict[str, Any]:
     }
 
 
-def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, Any]:
+def get_slot_bounds(img_w: int, img_h: int, camera_type: str = "chamber") -> Tuple[int, int, int, int]:
     """
-    Crops the designated ROI bounding box, performs adaptive 7-segment preprocessing,
-    and extracts numeric thermometer readout.
+    Computes absolute pixel bounding rectangle (slot_x, slot_y, slot_w, slot_h)
+    for the designated camera feed within single or dual stitched composite captures.
+    """
+    cam = (camera_type or "chamber").lower()
+    is_device = (cam == "device" or "standard" in cam)
+
+    # 1. Multi-camera vertical stack with 50px outside border (2020 x 2260 default)
+    if img_w >= 1950 and img_h >= 2180:
+        border = 50
+        slot_w = img_w - (border * 2)
+        slot_h = (img_h - (border * 2)) // 2
+        slot_x = border
+        slot_y = border + slot_h if is_device else border
+        return slot_x, slot_y, slot_w, slot_h
+
+    # 2. Raw dual vertical stack without twibbon border (e.g. 1920 x 2160)
+    if img_h >= int(img_w * 0.95):
+        half_h = img_h // 2
+        slot_y = half_h if is_device else 0
+        return 0, slot_y, img_w, half_h
+
+    # 3. Single camera snapshot with 50px border (e.g. 2020 x 1180)
+    if img_w >= 1950 and 1100 <= img_h <= 1250:
+        border = 50
+        return border, border, img_w - (border * 2), img_h - (border * 2)
+
+    # 4. Standard raw single feed
+    return 0, 0, img_w, img_h
+
+
+def auto_deskew_and_unwarp_quad(cv_crop: Any) -> Any:
+    """
+    Detects perspective keystoning, trapezoid distortion, or rotational tilt
+    inside a cropped thermometer ROI and warps it into an upright rectangular display.
+    """
+    if not HAS_CV2 or cv_crop is None or np is None or cv2 is None or cv_crop.size == 0:
+        return cv_crop
+
+    h, w = cv_crop.shape[:2]
+    if h < 20 or w < 20:
+        return cv_crop
+
+    gray = cv2.cvtColor(cv_crop, cv2.COLOR_BGR2GRAY)
+
+    # 1. Try to find quadrilateral LCD glass border or active display area
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    best_quad = None
+    min_area = (w * h) * 0.15
+    max_area = (w * h) * 0.96
+    largest_area = 0
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if min_area <= area <= max_area and area > largest_area:
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.035 * peri, True)
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                best_quad = approx
+                largest_area = area
+
+    if best_quad is not None:
+        pts = best_quad.reshape(4, 2).astype("float32")
+        rect = np.zeros((4, 2), dtype="float32")
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)] # TL
+        rect[2] = pts[np.argmax(s)] # BR
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)] # TR
+        rect[3] = pts[np.argmax(diff)] # BL
+
+        tw = int(max(np.linalg.norm(rect[1] - rect[0]), np.linalg.norm(rect[2] - rect[3])))
+        th = int(max(np.linalg.norm(rect[3] - rect[0]), np.linalg.norm(rect[2] - rect[1])))
+        if tw > 25 and th > 15:
+            dst = np.float32([[0, 0], [tw, 0], [tw, th], [0, th]])
+            M = cv2.getPerspectiveTransform(rect, dst)
+            return cv2.warpPerspective(cv_crop, M, (tw, th), flags=cv2.INTER_CUBIC)
+
+    # 2. Rotated rectangle deskew using minAreaRect
+    if contours:
+        all_pts = np.vstack(contours)
+        min_rect = cv2.minAreaRect(all_pts)
+        angle = min_rect[2]
+        if angle < -45:
+            angle = -(90 + angle)
+        elif angle > 45:
+            angle = 90 - angle
+        else:
+            angle = -angle
+
+        if 1.5 <= abs(angle) <= 42.0:
+            center = (w // 2, h // 2)
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            return cv2.warpAffine(cv_crop, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    return cv_crop
+
+
+def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any]) -> Tuple[Image.Image, Optional[Any]]:
+    """
+    Extracts the display region from a composite snapshot using either
+    user-defined 4-point quadrilateral perspective pins or normalized bounding box coords.
+    Returns (cropped_pil_image, cropped_cv2_image_or_none).
     """
     img_w, img_h = pil_img.size
-    
-    # Calculate pixel coordinates with safe boundaries
-    x = max(0, int(box.get("x", 0) * img_w))
-    y = max(0, int(box.get("y", 0) * img_h))
-    w = max(10, int(box.get("w", 0.2) * img_w))
-    h = max(10, int(box.get("h", 0.2) * img_h))
+    cam_type = box.get("camera_type") or box.get("target") or "chamber"
+    slot_x, slot_y, slot_w, slot_h = get_slot_bounds(img_w, img_h, cam_type)
 
-    crop = pil_img.crop((x, y, min(img_w, x + w), min(img_h, y + h)))
-    
-    # Save thumbnail bytes for Excel (high resolution so screen readout is clearly inspectable)
+    cv_full = None
+    if HAS_CV2 and np is not None and cv2 is not None:
+        cv_full = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+    # Case A: User supplied 4-point perspective polygon (Trapezoid / Skew Alignment)
+    points = box.get("points") or box.get("quad")
+    if points and len(points) == 4:
+        poly = []
+        for p in points:
+            px = float(slot_x + p[0] * slot_w)
+            py = float(slot_y + p[1] * slot_h)
+            poly.append([px, py])
+
+        tl, tr, br, bl = poly[0], poly[1], poly[2], poly[3]
+        target_w = max(40, int(max(math.hypot(tr[0] - tl[0], tr[1] - tl[1]), math.hypot(br[0] - bl[0], br[1] - bl[1]))))
+        target_h = max(25, int(max(math.hypot(bl[0] - tl[0], bl[1] - tl[1]), math.hypot(br[0] - tr[0], br[1] - tr[1]))))
+
+        if HAS_CV2 and cv_full is not None:
+            src_pts = np.float32([tl, tr, br, bl])
+            dst_pts = np.float32([[0, 0], [target_w, 0], [target_w, target_h], [0, target_h]])
+            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            warped_cv = cv2.warpPerspective(cv_full, M, (target_w, target_h), flags=cv2.INTER_CUBIC)
+            warped_rgb = cv2.cvtColor(warped_cv, cv2.COLOR_BGR2RGB)
+            return Image.fromarray(warped_rgb), warped_cv
+        else:
+            # Pillow QUAD transform fallback
+            quad_data = [tl[0], tl[1], bl[0], bl[1], br[0], br[1], tr[0], tr[1]]
+            pil_warped = pil_img.transform((target_w, target_h), Image.Transform.QUAD, data=quad_data, resample=Image.Resampling.BICUBIC)
+            return pil_warped, None
+
+    # Case B: Standard bounding box
+    norm_x = float(box.get("x", 0))
+    norm_y = float(box.get("y", 0))
+    norm_w = float(box.get("width") if box.get("width") is not None else box.get("w", 0.2))
+    norm_h = float(box.get("height") if box.get("height") is not None else box.get("h", 0.2))
+
+    px = max(0, min(img_w - 10, int(slot_x + norm_x * slot_w)))
+    py = max(0, min(img_h - 10, int(slot_y + norm_y * slot_h)))
+    pw = max(10, min(img_w - px, int(norm_w * slot_w)))
+    ph = max(10, min(img_h - py, int(norm_h * slot_h)))
+
+    crop_pil = pil_img.crop((px, py, px + pw, py + ph))
+    crop_cv = None
+    if HAS_CV2 and cv_full is not None:
+        crop_cv = cv_full[py:py + ph, px:px + pw].copy()
+        # Automatically detect and rectify tilt / trapezoid distortion
+        crop_cv = auto_deskew_and_unwarp_quad(crop_cv)
+        crop_pil = Image.fromarray(cv2.cvtColor(crop_cv, cv2.COLOR_BGR2RGB))
+
+    return crop_pil, crop_cv
+
+
+def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image) -> Tuple[Image.Image, str]:
+    """
+    Optimized preprocessing pipeline for 7-segment LCD and VFD/LED thermometer displays.
+    Bridges segment gaps and normalizes contrast for maximum Tesseract OCR precision.
+    """
+    if not HAS_CV2 or cv_crop is None or np is None or cv2 is None or cv_crop.size == 0:
+        gray = ImageOps.grayscale(pil_crop)
+        enhancer = ImageEnhance.Contrast(gray)
+        contrast = enhancer.enhance(2.2)
+        return ImageOps.expand(contrast, border=15, fill=255), "standard_lcd"
+
+    h, w = cv_crop.shape[:2]
+    b, g, r = cv2.split(cv_crop)
+    green_mean = float(np.mean(g))
+    red_mean = float(np.mean(r))
+
+    # 1. Green VFD / LED Readout (Fluke 1502A Standard Thermometer)
+    if green_mean > (red_mean + 10) or (green_mean > 32 and float(np.max(g)) > 110 and red_mean < 85):
+        # Color difference: isolate pure luminous green
+        g_diff = cv2.subtract(g, cv2.max(r, b))
+
+        # Threshold glowing segments
+        _, thresh = cv2.threshold(g_diff, 28, 255, cv2.THRESH_BINARY)
+
+        # Morphological Closing: Bridges physical segment gaps so digits form continuous readable glyphs
+        k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, k_close)
+
+        # Subtle dilation to preserve decimal dots (e.g. the '.' in 20.163)
+        k_dot = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        reinforced = cv2.dilate(closed, k_dot, iterations=1)
+
+        # Invert: Black text on pure white background
+        inverted = cv2.bitwise_not(reinforced)
+
+        # Add 15px white margin so edge digits are never cut off by Tesseract character boundary finder
+        padded = cv2.copyMakeBorder(inverted, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+        return Image.fromarray(padded), "green_vfd"
+
+    # 2. Standard 7-Segment LCD Display (HTC-1 / HTC-2 Black on Grey LCD)
+    gray = cv2.cvtColor(cv_crop, cv2.COLOR_BGR2GRAY)
+
+    # CLAHE to equalize lighting across the LCD glass
+    clahe = cv2.createCLAHE(clipLimit=2.8, tileGridSize=(6, 6))
+    eq = clahe.apply(gray)
+
+    # Bilateral filter to smooth liquid-crystal grain while keeping segment borders sharp
+    filtered = cv2.bilateralFilter(eq, 7, 45, 45)
+
+    # Adaptive thresholding
+    thresh = cv2.adaptiveThreshold(filtered, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 6)
+
+    # Morphological closing to bridge 7-segment gaps
+    k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, k_close)
+
+    # Invert to black digits on white background
+    inverted = cv2.bitwise_not(closed)
+    padded = cv2.copyMakeBorder(inverted, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+    return Image.fromarray(padded), "standard_lcd"
+
+
+def extract_thermometer_value(text: str) -> Optional[float]:
+    """
+    Parses numeric calibration temperatures and fixes common 7-segment character ambiguities.
+    """
+    if not text:
+        return None
+
+    # Replace common 7-segment character misrecognitions
+    t = text.replace(" ", "")
+    t = t.replace("O", "0").replace("o", "0")
+    t = t.replace("S", "5").replace("s", "5")
+    t = t.replace("B", "8")
+    t = t.replace("l", "1").replace("I", "1").replace("|", "1")
+    t = t.replace(",", ".")
+
+    # Match floating point numbers (e.g. 20.163, 20.0, 19.8, -5.2, 100.00)
+    matches = re.findall(r"[-+]?\d{1,3}(?:\.\d{1,4})?", t)
+    for m in matches:
+        try:
+            val = float(m)
+            if -50.0 <= val <= 250.0:
+                return val
+        except ValueError:
+            continue
+
+    # Fallback to integer numbers
+    int_matches = re.findall(r"[-+]?\d{1,3}", t)
+    for m in int_matches:
+        try:
+            val = float(m)
+            if -50.0 <= val <= 250.0:
+                return val
+        except ValueError:
+            continue
+
+    return None
+
+
+def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extracts the designated ROI display region with perspective unwarping,
+    performs segment-gap bridging preprocessing, and extracts numeric temperature readout.
+    """
+    # 1. Extract crop with accurate slot coordinate mapping & perspective unwarping
+    crop, cv_crop = extract_roi_region(pil_img, box)
+
+    # 2. Save high-resolution thumbnail bytes for Excel inspection
     thumb_buf = io.BytesIO()
     thumb_img = crop.copy()
     thumb_img.thumbnail((720, 480), Image.Resampling.LANCZOS)
@@ -419,56 +676,10 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
             "crop_bytes": crop_bytes
         }
 
-    # Preprocessing pipeline optimized for LCD segment displays and LED matrix readouts:
-    # 1. Grayscale & Contrast Boost
-    gray = ImageOps.grayscale(crop)
-    enhancer = ImageEnhance.Contrast(gray)
-    contrast_img = enhancer.enhance(2.0)
+    # 3. Preprocess for 7-Segment / VFD
+    cleaned_ocr_img, display_type = preprocess_for_7segment_ocr(cv_crop, crop)
 
-    # 2. Check if green VFD / LED readout (like Fluke 1502A) vs black LCD on gray
-    # Convert crop to numpy for smart thresholding
-    crop_np = np.array(crop) if np is not None else None
-    
-    # Verify that the cropped box actually contains an active digital display
-    if HAS_CV2 and crop_np is not None:
-        cv_crop = cv2.cvtColor(crop_np, cv2.COLOR_RGB2BGR)
-        is_dig, conf, reason = verify_is_digital_display(cv_crop)
-        if not is_dig:
-            return {
-                "text": "NON-DIGITAL (UNSUPPORTED)",
-                "value": None,
-                "status": "error",
-                "is_digital": False,
-                "message": f"Region does not contain an active digital display ({reason}).",
-                "crop_bytes": crop_bytes
-            }
-
-    cleaned_ocr_img = contrast_img
-    if crop_np is not None and HAS_CV2:
-        cv_crop = cv2.cvtColor(crop_np, cv2.COLOR_RGB2BGR)
-        # Check green channel dominance (Fluke readout)
-        b, g, r = cv2.split(cv_crop)
-        green_mean = float(np.mean(g))
-        red_mean = float(np.mean(r))
-        
-        if green_mean > (red_mean + 15) and green_mean > 40:
-            # Green LED readout: threshold green channel and invert to black text on white
-            _, thresh = cv2.threshold(g, 70, 255, cv2.THRESH_BINARY)
-            # Dilation to merge segment gaps
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            dilated = cv2.dilate(thresh, kernel, iterations=1)
-            # Invert for Tesseract (black text on white background)
-            inverted = cv2.bitwise_not(dilated)
-            cleaned_ocr_img = Image.fromarray(inverted)
-        else:
-            # Standard LCD (black segments on gray background)
-            gray_cv = cv2.cvtColor(cv_crop, cv2.COLOR_BGR2GRAY)
-            # Otsu's thresholding
-            _, otsu = cv2.threshold(gray_cv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            cleaned_ocr_img = Image.fromarray(otsu)
-
-    # Tesseract OCR invocation
-    # If custom .traineddata models exist in TESSDATA_DIR, prioritize them via --tessdata-dir
+    # 4. Tesseract OCR invocation with specialized PSM modes and Whitelist
     tess_prefix_arg = ""
     custom_tess_dir = os.environ.get("TESSDATA_DIR")
     check_dirs = [custom_tess_dir, "/app/data/tessdata", str(Path(__file__).parent / "data" / "tessdata")]
@@ -481,60 +692,63 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any]) -> Dict[str, 
             except Exception:
                 pass
 
-    # PSM 7: Treat the image as a single text line. PSM 6: Single uniform block of text.
     ocr_configs = [
         f"{tess_prefix_arg}--psm 7 -c tessedit_char_whitelist=0123456789.-C% ",
         f"{tess_prefix_arg}--psm 6 -c tessedit_char_whitelist=0123456789.-C% ",
+        f"{tess_prefix_arg}--psm 11 -c tessedit_char_whitelist=0123456789.-C% ",
         f"{tess_prefix_arg}--psm 8 -c tessedit_char_whitelist=0123456789.- "
     ]
 
     extracted_text = ""
+    cleaned_val = None
+
     for cfg in ocr_configs:
         try:
             res = pytesseract.image_to_string(cleaned_ocr_img, config=cfg).strip()
             if res:
-                extracted_text = res
-                break
+                v = extract_thermometer_value(res)
+                if v is not None:
+                    extracted_text = res
+                    cleaned_val = v
+                    break
+                elif not extracted_text:
+                    extracted_text = res
         except Exception:
             pass
 
-    # Clean & normalize extracted numeric temperature / humidity
-    # Extract floating point numbers (e.g. 25.066, 15.082, 20.9, 19.9, 42)
-    cleaned_val = None
-    status = "error" # red, yellow, green
-    
-    # Regex for decimal number
-    matches = re.findall(r"[-+]?\d+(?:[.,]\d+)?", extracted_text)
-    if matches:
-        first_num_str = matches[0].replace(",", ".")
-        try:
-            cleaned_val = float(first_num_str)
-            # Temperature plausibility check (-50 to 150 C)
-            if -50.0 <= cleaned_val <= 150.0:
-                status = "success"  # green
-            else:
-                status = "warning"  # yellow
-        except ValueError:
-            status = "warning"
+    if cleaned_val is None and extracted_text:
+        cleaned_val = extract_thermometer_value(extracted_text)
+
+    status = "error"
+    if cleaned_val is not None:
+        status = "success"
     elif extracted_text:
-        status = "warning"  # yellow
+        status = "warning"
     else:
-        status = "error"    # red
         extracted_text = "N/A"
 
     return {
         "text": extracted_text,
         "value": cleaned_val,
         "status": status,
+        "display_type": display_type,
         "crop_bytes": crop_bytes
     }
 
 
-def generate_project_excel(project_dir: Path, boxes_config: List[Dict[str, Any]], project_name: str) -> bytes:
+def generate_project_excel(project_dir: Path, arg2: Any, arg3: Any = None) -> bytes:
     """
     Processes all snapshots in a project directory and builds an Excel calibration sheet
     with embedded thumbnail images and OCR readings.
+    Supports both signatures: (project_dir, boxes, project_name) or (project_dir, project_name, boxes).
     """
+    if isinstance(arg2, str):
+        project_name = arg2
+        boxes_config = arg3 or []
+    else:
+        boxes_config = arg2 or []
+        project_name = str(arg3) if arg3 else project_dir.name
+
     if not HAS_OPENPYXL:
         raise RuntimeError("openpyxl library is required to generate Excel reports.")
 

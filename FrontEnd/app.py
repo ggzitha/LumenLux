@@ -850,39 +850,8 @@ async def auto_detect_boxes(project_id: str, payload: dict, user: str = Depends(
     return {"status": "ok", **detection_result}
 
 
-@app.get("/api/ocr/projects/{project_id}/export")
-async def export_project_excel(project_id: str, user: str = Depends(require_auth)):
-    """
-    Run OCR on all project snapshots and export an .xlsx workbook with embedded thumbnails.
-    """
-    record_activity()
-    proj_dir = resolve_project_dir(project_id)
-    if not proj_dir.exists():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    meta = get_project_metadata(proj_dir)
-    boxes = meta.get("boxes", [])
-
-    try:
-        excel_bytes = generate_project_excel(proj_dir, boxes, meta.get("name", proj_dir.name))
-        filename = f"LumenLux_OCR_{proj_dir.name}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
-        return Response(
-            content=excel_bytes,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-        )
-    except Exception as e:
-        logger.error("Error exporting project excel: %s", e)
-        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}")
 
 
-@app.get("/api/ocr/projects/{project_id}/snapshots/{filename}")
-async def get_project_snapshot_file(project_id: str, filename: str, user: str = Depends(require_auth)):
-    proj_dir = resolve_project_dir(project_id)
-    file_path = proj_dir / filename
-    if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path, media_type="image/jpeg")
-    raise HTTPException(status_code=404, detail="Snapshot not found")
 
 
 # --- BACKEND PROXY & HEAVY LIFTING APIS ---
@@ -1442,6 +1411,72 @@ async def detect_project_displays(project_id: str, request: Request, user: str =
     except Exception as e:
         logger.error("Detection endpoint failed: %s", e)
         return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+
+@app.post("/api/ocr/projects/{project_id}/test_box")
+async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depends(require_auth)):
+    """
+    Instantly test perspective unwarping and OCR recognition for a specific ROI bounding box
+    on the latest snapshot or live camera frame. Returns crop thumbnail base64 and recognized reading.
+    """
+    record_activity()
+    proj_dir = PROJECTS_DIR / project_id
+    payload = await request.json()
+    box = payload.get("box", {})
+    image_b64 = payload.get("image_base64")
+
+    raw_bytes = None
+    if image_b64:
+        try:
+            if "," in image_b64:
+                image_b64 = image_b64.split(",", 1)[1]
+            raw_bytes = base64.b64decode(image_b64)
+        except Exception:
+            pass
+
+    if not raw_bytes:
+        snaps = sorted(
+            list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")),
+            key=lambda p: p.stat().st_mtime
+        )
+        if snaps:
+            try:
+                with open(snaps[-1], "rb") as f:
+                    raw_bytes = f.read()
+            except Exception:
+                pass
+
+    if not raw_bytes and backend_client:
+        try:
+            res = await backend_client.get("/api/camera/snapshot", timeout=4.0)
+            if res.status_code == 200:
+                raw_bytes = res.content
+        except Exception:
+            pass
+
+    if not raw_bytes:
+        return JSONResponse({"status": "error", "message": "No snapshot or camera image available to test."}, status_code=400)
+
+    try:
+        pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+        ocr_res = perform_display_ocr(pil_img, box)
+
+        crop_b64 = ""
+        if ocr_res.get("crop_bytes"):
+            crop_b64 = "data:image/jpeg;base64," + base64.b64encode(ocr_res["crop_bytes"]).decode("ascii")
+
+        return JSONResponse({
+            "status": "ok",
+            "ocr_status": ocr_res.get("status", "error"),
+            "text": ocr_res.get("text", "N/A"),
+            "value": ocr_res.get("value"),
+            "display_type": ocr_res.get("display_type", "standard_lcd"),
+            "crop_base64": crop_b64
+        })
+    except Exception as e:
+        logger.error("Error testing ROI box OCR: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 @app.get("/api/ocr/projects/{project_id}/export")

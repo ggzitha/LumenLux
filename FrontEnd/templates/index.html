@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=5.4">
+    <link rel="stylesheet" href="/static/css/main.css?v=5.9">
 </head>
 
 <body>
@@ -1665,6 +1665,62 @@
         </div>
     </div>
 
+    <!-- Live ROI OCR Instant Test & Preview Modal -->
+    <div class="ocr-modal-backdrop" id="roiTestResultModal">
+        <div class="ocr-modal-card" style="max-width: 440px;">
+            <div class="ocr-modal-header">
+                <div class="ocr-modal-title">
+                    <div class="ocr-modal-icon" id="roiTestStatusIcon"
+                        style="background: rgba(16, 185, 129, 0.15); color: var(--neon-green); border-color: rgba(16, 185, 129, 0.3);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 id="roiTestBoxTitle">ROI OCR Test Preview</h3>
+                        <p id="roiTestBoxSubtitle">Unwarped perspective crop & recognized value</p>
+                    </div>
+                </div>
+                <button type="button" class="ocr-modal-close" id="btnCloseRoiTestModal" title="Close">✕</button>
+            </div>
+            <div class="ocr-modal-body" style="gap: 14px;">
+                <!-- Straightened Crop Image Preview -->
+                <div class="roi-test-preview-wrap">
+                    <div class="roi-test-crop-label">Straightened Perspective Crop:</div>
+                    <div class="roi-test-img-container">
+                        <img id="roiTestCropImg" src="" alt="ROI Perspective Crop" class="roi-test-crop-img">
+                    </div>
+                </div>
+
+                <!-- Recognition Result Card -->
+                <div class="roi-test-data-card">
+                    <div class="roi-test-row">
+                        <span class="roi-test-label">Parsed Reading:</span>
+                        <span class="roi-test-val-badge" id="roiTestValueBadge">-- °C</span>
+                    </div>
+                    <div class="roi-test-row">
+                        <span class="roi-test-label">Raw Text:</span>
+                        <span class="roi-test-raw-text" id="roiTestRawText">--</span>
+                    </div>
+                    <div class="roi-test-row">
+                        <span class="roi-test-label">Display Type:</span>
+                        <span class="roi-test-badge" id="roiTestDisplayType">--</span>
+                    </div>
+                    <div class="roi-test-row">
+                        <span class="roi-test-label">Accuracy Status:</span>
+                        <span class="roi-test-badge" id="roiTestStatusBadge">--</span>
+                    </div>
+                </div>
+
+                <div class="ocr-modal-actions" style="margin-top: 6px;">
+                    <button type="button" class="btn-ocr-submit" id="btnOkRoiTestModal" style="width: 100%;">
+                        <span>Close & Keep Position</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
@@ -1673,7 +1729,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=5.8"></script>
+    <script src="/static/js/app.js?v=5.9"></script>
 </body>
 
 </html>

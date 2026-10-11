@@ -2213,13 +2213,89 @@ async function selectActiveProject(projectId, notify = true) {
         // 4 digital thermo boxes on Chamber, 1 standard thermo box on Device
         if (ocrStudioState.boxes.length === 0) {
             ocrStudioState.boxes = [
-                { id: "box_dev_std", label: "Standard (Fluke 1502A)", camera_type: "device", x: 0.25, y: 0.30, width: 0.50, height: 0.35, status: "success" },
-                { id: "box_ch_1", label: "Thermometer 01", camera_type: "chamber", x: 0.10, y: 0.18, width: 0.35, height: 0.30, status: "candidate" },
-                { id: "box_ch_2", label: "Thermometer 02", camera_type: "chamber", x: 0.55, y: 0.18, width: 0.35, height: 0.30, status: "candidate" },
-                { id: "box_ch_3", label: "Thermometer 03", camera_type: "chamber", x: 0.10, y: 0.55, width: 0.35, height: 0.30, status: "candidate" },
-                { id: "box_ch_4", label: "Thermometer 04", camera_type: "chamber", x: 0.55, y: 0.55, width: 0.35, height: 0.30, status: "candidate" }
+                {
+                    id: "box_dev_std",
+                    label: "Standard (Fluke 1502A)",
+                    camera_type: "device",
+                    mode: "quad",
+                    x: 0.28,
+                    y: 0.35,
+                    width: 0.44,
+                    height: 0.22,
+                    points: [[0.28, 0.35], [0.72, 0.35], [0.72, 0.57], [0.28, 0.57]],
+                    status: "success"
+                },
+                {
+                    id: "box_ch_1",
+                    label: "Thermometer 01",
+                    camera_type: "chamber",
+                    mode: "rect",
+                    x: 0.10,
+                    y: 0.18,
+                    width: 0.35,
+                    height: 0.30,
+                    points: [[0.10, 0.18], [0.45, 0.18], [0.45, 0.48], [0.10, 0.48]],
+                    status: "candidate"
+                },
+                {
+                    id: "box_ch_2",
+                    label: "Thermometer 02",
+                    camera_type: "chamber",
+                    mode: "rect",
+                    x: 0.55,
+                    y: 0.18,
+                    width: 0.35,
+                    height: 0.30,
+                    points: [[0.55, 0.18], [0.90, 0.18], [0.90, 0.48], [0.55, 0.48]],
+                    status: "candidate"
+                },
+                {
+                    id: "box_ch_3",
+                    label: "Thermometer 03",
+                    camera_type: "chamber",
+                    mode: "rect",
+                    x: 0.10,
+                    y: 0.55,
+                    width: 0.35,
+                    height: 0.30,
+                    points: [[0.10, 0.55], [0.45, 0.55], [0.45, 0.85], [0.10, 0.85]],
+                    status: "candidate"
+                },
+                {
+                    id: "box_ch_4",
+                    label: "Thermometer 04",
+                    camera_type: "chamber",
+                    mode: "rect",
+                    x: 0.55,
+                    y: 0.55,
+                    width: 0.35,
+                    height: 0.30,
+                    points: [[0.55, 0.55], [0.90, 0.55], [0.90, 0.85], [0.55, 0.85]],
+                    status: "candidate"
+                }
             ];
             debouncedSaveRoiBoxes(200);
+        } else {
+            // Ensure backwards compatibility for existing boxes
+            ocrStudioState.boxes.forEach(b => {
+                if (!b.mode) {
+                    b.mode = (b.camera_type === "device") ? "quad" : "rect";
+                }
+                if (!b.points || b.points.length !== 4) {
+                    const bx = b.x ?? 0.2;
+                    const by = b.y ?? 0.2;
+                    const bw = b.width ?? b.w ?? 0.3;
+                    const bh = b.height ?? b.h ?? 0.2;
+                    b.points = [
+                        [bx, by],
+                        [parseFloat((bx + bw).toFixed(4)), by],
+                        [parseFloat((bx + bw).toFixed(4)), parseFloat((by + bh).toFixed(4))],
+                        [bx, parseFloat((by + bh).toFixed(4))]
+                    ];
+                }
+                if (b.width === undefined) b.width = b.w ?? 0.3;
+                if (b.height === undefined) b.height = b.h ?? 0.2;
+            });
         }
 
         renderRoiBoxes();
@@ -2361,7 +2437,7 @@ function exportProjectExcel(projectId) {
 }
 
 // --------------------------------------------------------------------------
-// ROI BOUNDING BOX RENDERING & INTERACTIVE DRAG/RESIZE (FRIGATE-STYLE)
+// ROI BOUNDING BOX & 4-CORNER TRAPEZOID PERSPECTIVE PINS RENDERING & CONTROLS
 // --------------------------------------------------------------------------
 
 function renderRoiBoxes() {
@@ -2375,40 +2451,116 @@ function renderRoiBoxes() {
         return;
     }
 
-    ocrStudioState.boxes.forEach((box) => {
-        const isDevice = box.camera_type === "device";
-        const container = isDevice ? overlayDevice : overlayChamber;
+    [
+        { container: overlayChamber, camType: "chamber" },
+        { container: overlayDevice, camType: "device" }
+    ].forEach(({ container, camType }) => {
         if (!container) return;
 
-        const boxEl = document.createElement("div");
-        boxEl.className = `roi-box status-${box.status || "candidate"}`;
-        boxEl.setAttribute("data-box-id", box.id);
-        boxEl.style.left = `${(box.x * 100).toFixed(2)}%`;
-        boxEl.style.top = `${(box.y * 100).toFixed(2)}%`;
-        boxEl.style.width = `${(box.width * 100).toFixed(2)}%`;
-        boxEl.style.height = `${(box.height * 100).toFixed(2)}%`;
+        const boxesForCam = ocrStudioState.boxes.filter(b => (b.camera_type || "chamber") === camType);
+        if (boxesForCam.length === 0) return;
 
-        const statusText = box.status === "success" ? "✓" : box.status === "error" ? "!" : box.status === "warning" ? "⚠" : "•";
+        // 1. Create SVG layer for polygons and connection lines
+        const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svgEl.setAttribute("class", "roi-svg-canvas");
+        svgEl.setAttribute("viewBox", "0 0 100 100");
+        svgEl.setAttribute("preserveAspectRatio", "none");
 
-        boxEl.innerHTML = `
-            <div class="roi-box-label">
-                <span>${statusText} ${box.label || "Thermometer"}</span>
-                <button type="button" class="roi-box-delete-btn" title="Remove Box">✕</button>
-            </div>
-            <div class="roi-handle handle-nw" data-handle="nw"></div>
-            <div class="roi-handle handle-ne" data-handle="ne"></div>
-            <div class="roi-handle handle-se" data-handle="se"></div>
-            <div class="roi-handle handle-sw" data-handle="sw"></div>
-        `;
+        boxesForCam.forEach(box => {
+            // Ensure points exist
+            if (!box.points || box.points.length !== 4) {
+                const bx = box.x ?? 0.2;
+                const by = box.y ?? 0.2;
+                const bw = box.width ?? 0.3;
+                const bh = box.height ?? 0.2;
+                box.points = [
+                    [bx, by],
+                    [parseFloat((bx + bw).toFixed(4)), by],
+                    [parseFloat((bx + bw).toFixed(4)), parseFloat((by + bh).toFixed(4))],
+                    [bx, parseFloat((by + bh).toFixed(4))]
+                ];
+            }
 
-        // Delete button listener
-        const btnDel = boxEl.querySelector(".roi-box-delete-btn");
-        btnDel?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            removeRoiBox(box.id);
+            const ptsStr = box.points.map(p => `${(p[0] * 100).toFixed(2)},${(p[1] * 100).toFixed(2)}`).join(" ");
+            const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            poly.setAttribute("points", ptsStr);
+            poly.setAttribute("class", `roi-poly status-${box.status || "candidate"}`);
+            poly.setAttribute("data-box-id", box.id);
+            poly.setAttribute("title", `Click & drag to reposition ${box.label}`);
+            svgEl.appendChild(poly);
         });
+        container.appendChild(svgEl);
 
-        container.appendChild(boxEl);
+        // 2. Create interactive HTML pin handles & labels
+        boxesForCam.forEach(box => {
+            const statusText = box.status === "success" ? "✓" : box.status === "error" ? "!" : box.status === "warning" ? "⚠" : "•";
+            const pts = box.points;
+
+            // Find top-left most point for label placement
+            const minX = Math.min(...pts.map(p => p[0]));
+            const minY = Math.min(...pts.map(p => p[1]));
+
+            // Label Header
+            const labelEl = document.createElement("div");
+            labelEl.className = `roi-box-label status-${box.status || "candidate"}`;
+            labelEl.setAttribute("data-box-id", box.id);
+            labelEl.style.left = `${(minX * 100).toFixed(2)}%`;
+            labelEl.style.top = `${Math.max(0, (minY * 100) - 2.8).toFixed(2)}%`;
+            labelEl.innerHTML = `
+                <span>${statusText} ${box.label || "Thermometer"}</span>
+                <button type="button" class="roi-test-btn" data-test-box="${box.id}" title="Instant Test OCR on this display">🔍 Test</button>
+                <button type="button" class="roi-mode-btn" data-toggle-mode="${box.id}" title="Switch between ⬠ Trapezoid Pins and ▢ Rect Box">${box.mode === "quad" ? "⬠ Pins" : "▢ Box"}</button>
+                <button type="button" class="roi-box-delete-btn" data-delete-box="${box.id}" title="Remove Box">✕</button>
+            `;
+
+            labelEl.querySelector("[data-delete-box]")?.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeRoiBox(box.id);
+            });
+
+            labelEl.querySelector("[data-test-box]")?.addEventListener("click", (e) => {
+                e.stopPropagation();
+                testBoxOcr(box.id);
+            });
+
+            labelEl.querySelector("[data-toggle-mode]")?.addEventListener("click", (e) => {
+                e.stopPropagation();
+                toggleBoxMode(box.id);
+            });
+
+            container.appendChild(labelEl);
+
+            // 4 Corner Pin Handles
+            const cornerNames = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"];
+            pts.forEach((p, idx) => {
+                const pinEl = document.createElement("div");
+                pinEl.className = `roi-pin pin-${idx} status-${box.status || "candidate"}`;
+                pinEl.setAttribute("data-box-id", box.id);
+                pinEl.setAttribute("data-pin-idx", String(idx));
+                pinEl.style.left = `${(p[0] * 100).toFixed(2)}%`;
+                pinEl.style.top = `${(p[1] * 100).toFixed(2)}%`;
+                pinEl.setAttribute("title", `Drag corner pin ${idx + 1} (${cornerNames[idx]}) to align perspective`);
+                container.appendChild(pinEl);
+            });
+
+            // If in "rect" mode, also render the standard box frame with corner resize handles
+            if (box.mode === "rect") {
+                const rectEl = document.createElement("div");
+                rectEl.className = `roi-box status-${box.status || "candidate"}`;
+                rectEl.setAttribute("data-box-id", box.id);
+                rectEl.style.left = `${(box.x * 100).toFixed(2)}%`;
+                rectEl.style.top = `${(box.y * 100).toFixed(2)}%`;
+                rectEl.style.width = `${(box.width * 100).toFixed(2)}%`;
+                rectEl.style.height = `${(box.height * 100).toFixed(2)}%`;
+                rectEl.innerHTML = `
+                    <div class="roi-handle handle-nw" data-handle="nw"></div>
+                    <div class="roi-handle handle-ne" data-handle="ne"></div>
+                    <div class="roi-handle handle-se" data-handle="se"></div>
+                    <div class="roi-handle handle-sw" data-handle="sw"></div>
+                `;
+                container.appendChild(rectEl);
+            }
+        });
     });
 }
 
@@ -2419,6 +2571,31 @@ function removeRoiBox(boxId) {
     showToast("Bounding box removed");
 }
 
+function toggleBoxMode(boxId) {
+    const box = ocrStudioState.boxes.find(b => b.id === boxId);
+    if (!box) return;
+    box.mode = box.mode === "quad" ? "rect" : "quad";
+    if (box.mode === "rect") {
+        const minX = Math.min(...box.points.map(p => p[0]));
+        const maxX = Math.max(...box.points.map(p => p[0]));
+        const minY = Math.min(...box.points.map(p => p[1]));
+        const maxY = Math.max(...box.points.map(p => p[1]));
+        box.x = parseFloat(minX.toFixed(4));
+        box.y = parseFloat(minY.toFixed(4));
+        box.width = parseFloat((maxX - minX).toFixed(4));
+        box.height = parseFloat((maxY - minY).toFixed(4));
+        box.points = [
+            [box.x, box.y],
+            [parseFloat((box.x + box.width).toFixed(4)), box.y],
+            [parseFloat((box.x + box.width).toFixed(4)), parseFloat((box.y + box.height).toFixed(4))],
+            [box.x, parseFloat((box.y + box.height).toFixed(4))]
+        ];
+    }
+    renderRoiBoxes();
+    debouncedSaveRoiBoxes(300);
+    showToast(`Switched "${box.label}" to ${box.mode === "quad" ? "4-Corner Trapezoid Pins (Keystone Deskew Mode)" : "Rectangle Box Mode"}`);
+}
+
 function addManualRoiBox(cameraType = "chamber", label = "Thermometer") {
     if (!ocrStudioState.activeProjectId) {
         showToast("Please create or select an Active Project first!");
@@ -2427,43 +2604,198 @@ function addManualRoiBox(cameraType = "chamber", label = "Thermometer") {
 
     const existingCount = ocrStudioState.boxes.filter(b => b.camera_type === cameraType).length;
     const boxNum = String(existingCount + 1).padStart(2, "0");
-    const fullLabel = cameraType === "device" && existingCount === 0
+    const isDevice = cameraType === "device";
+    const fullLabel = isDevice && existingCount === 0
         ? "Standard (Fluke 1502A)"
         : `${label} ${boxNum}`;
+
+    const bx = isDevice ? 0.28 : 0.35;
+    const by = isDevice ? 0.35 : 0.35;
+    const bw = isDevice ? 0.44 : 0.30;
+    const bh = isDevice ? 0.22 : 0.25;
 
     const newBox = {
         id: `box_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         label: fullLabel,
         camera_type: cameraType,
-        x: 0.35,
-        y: 0.35,
-        width: 0.30,
-        height: 0.25,
+        mode: isDevice ? "quad" : "rect",
+        x: bx,
+        y: by,
+        width: bw,
+        height: bh,
+        points: [
+            [bx, by],
+            [parseFloat((bx + bw).toFixed(4)), by],
+            [parseFloat((bx + bw).toFixed(4)), parseFloat((by + bh).toFixed(4))],
+            [bx, parseFloat((by + bh).toFixed(4))]
+        ],
         status: "candidate"
     };
 
     ocrStudioState.boxes.push(newBox);
     renderRoiBoxes();
     debouncedSaveRoiBoxes(300);
-    showToast(`Added ${fullLabel}. Drag or resize box on ${cameraType === "device" ? "Device" : "Chamber"} camera.`);
+    showToast(`Added ${fullLabel}. ${isDevice ? 'Drag the 4 corner pins to match the tilted/trapezoid display.' : 'Drag or resize box on Chamber.'}`);
 }
+
+async function testBoxOcr(boxId) {
+    if (!ocrStudioState.activeProjectId) {
+        showToast("Please select an Active Project first!");
+        return;
+    }
+    const box = ocrStudioState.boxes.find(b => b.id === boxId);
+    if (!box) return;
+
+    showToast(`🔍 Testing perspective unwarp & OCR on "${box.label}"...`);
+
+    let imageBase64 = null;
+    try {
+        const isDevice = box.camera_type === "device";
+        const video = isDevice
+            ? document.getElementById("deviceCameraVideo")
+            : document.getElementById("chamberVideo");
+        const streamImg = document.getElementById("cameraStream");
+
+        const testCanvas = document.createElement("canvas");
+        if (video && video.videoWidth > 0 && !video.classList.contains("hidden")) {
+            testCanvas.width = video.videoWidth;
+            testCanvas.height = video.videoHeight;
+            const tCtx = testCanvas.getContext("2d");
+            tCtx.drawImage(video, 0, 0);
+            imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+        } else if (!isDevice && streamImg && streamImg.naturalWidth) {
+            testCanvas.width = streamImg.naturalWidth;
+            testCanvas.height = streamImg.naturalHeight;
+            const tCtx = testCanvas.getContext("2d");
+            tCtx.drawImage(streamImg, 0, 0);
+            imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+        }
+    } catch (e) {
+        console.warn("Could not capture live video frame, backend will use latest project snapshot:", e);
+    }
+
+    try {
+        const res = await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/test_box`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                box: box,
+                image_base64: imageBase64
+            })
+        });
+        const result = await res.json();
+        if (result.status === "ok") {
+            box.status = result.ocr_status || "candidate";
+            debouncedSaveRoiBoxes(300);
+            renderRoiBoxes();
+            showOcrTestResultModal(box, result);
+        } else {
+            box.status = "error";
+            renderRoiBoxes();
+            showToast("❌ OCR Test Error: " + (result.message || result.error || "Failed recognition"));
+        }
+    } catch (err) {
+        console.error("Test OCR error:", err);
+        showToast("Network error testing OCR: " + err.message);
+    }
+}
+
+function showOcrTestResultModal(box, result) {
+    const modal = document.getElementById("roiTestResultModal");
+    const cropImg = document.getElementById("roiTestCropImg");
+    const titleEl = document.getElementById("roiTestBoxTitle");
+    const subtitleEl = document.getElementById("roiTestBoxSubtitle");
+    const valBadge = document.getElementById("roiTestValueBadge");
+    const rawTextEl = document.getElementById("roiTestRawText");
+    const dispTypeEl = document.getElementById("roiTestDisplayType");
+    const statusBadge = document.getElementById("roiTestStatusBadge");
+    const statusIcon = document.getElementById("roiTestStatusIcon");
+
+    if (!modal) return;
+
+    if (titleEl) titleEl.textContent = `${box.label} — OCR Test`;
+    if (subtitleEl) subtitleEl.textContent = `Mode: ${box.mode === "quad" ? "4-Corner Trapezoid Pins (Keystone Deskew)" : "Standard Rectangle Box"}`;
+
+    if (cropImg) {
+        if (result.crop_base64) {
+            cropImg.src = result.crop_base64;
+            cropImg.style.display = "block";
+        } else {
+            cropImg.style.display = "none";
+        }
+    }
+
+    if (valBadge) {
+        valBadge.textContent = result.value !== null && result.value !== undefined ? `${result.value} °C` : "N/A";
+        valBadge.style.color = result.ocr_status === "success" ? "#10b981" : result.ocr_status === "warning" ? "#eab308" : "#ef4444";
+    }
+
+    if (rawTextEl) rawTextEl.textContent = result.text || "(empty)";
+    if (dispTypeEl) {
+        dispTypeEl.textContent = result.display_type === "green_vfd" ? "VFD (Fluke 1502A Green)" : "LCD (7-Segment)";
+    }
+
+    if (statusBadge) {
+        if (result.ocr_status === "success") {
+            statusBadge.textContent = "✓ High Confidence Recognized";
+            statusBadge.style.background = "rgba(16, 185, 129, 0.2)";
+            statusBadge.style.color = "#10b981";
+        } else if (result.ocr_status === "warning") {
+            statusBadge.textContent = "⚠ Partial / Check Alignment";
+            statusBadge.style.background = "rgba(234, 179, 8, 0.2)";
+            statusBadge.style.color = "#eab308";
+        } else {
+            statusBadge.textContent = "✕ Failed / Re-align Pins";
+            statusBadge.style.background = "rgba(239, 68, 68, 0.2)";
+            statusBadge.style.color = "#ef4444";
+        }
+    }
+
+    if (statusIcon) {
+        statusIcon.style.color = result.ocr_status === "success" ? "#10b981" : result.ocr_status === "warning" ? "#eab308" : "#ef4444";
+        statusIcon.style.borderColor = statusIcon.style.color;
+    }
+
+    modal.classList.add("active");
+}
+
+// Close handlers for Test Result Modal
+document.getElementById("btnCloseRoiTestModal")?.addEventListener("click", () => {
+    document.getElementById("roiTestResultModal")?.classList.remove("active");
+});
+document.getElementById("btnOkRoiTestModal")?.addEventListener("click", () => {
+    document.getElementById("roiTestResultModal")?.classList.remove("active");
+});
 
 function setupRoiInteractionHandlers() {
     // Universal pointer events for mouse and touch dragging & resizing
     const onPointerDown = (e) => {
+        const pin = e.target.closest(".roi-pin");
         const handle = e.target.closest(".roi-handle");
+        const poly = e.target.closest(".roi-poly");
         const boxEl = e.target.closest(".roi-box");
-        if (!boxEl) return;
+        const labelEl = e.target.closest(".roi-box-label");
 
-        const boxId = boxEl.getAttribute("data-box-id");
-        const box = ocrStudioState.boxes.find(b => b.id === boxId);
+        if (e.target.closest("button")) return;
+
+        let targetBoxId = null;
+        if (pin) targetBoxId = pin.getAttribute("data-box-id");
+        else if (handle) targetBoxId = handle.closest(".roi-box")?.getAttribute("data-box-id");
+        else if (poly) targetBoxId = poly.getAttribute("data-box-id");
+        else if (boxEl) targetBoxId = boxEl.getAttribute("data-box-id");
+        else if (labelEl) targetBoxId = labelEl.getAttribute("data-box-id");
+
+        if (!targetBoxId) return;
+        const box = ocrStudioState.boxes.find(b => b.id === targetBoxId);
         if (!box) return;
 
-        const container = boxEl.parentElement;
+        const container = (box.camera_type === "device")
+            ? document.getElementById("roiOverlayDevice")
+            : document.getElementById("roiOverlayChamber");
         if (!container) return;
 
         const cRect = container.getBoundingClientRect();
-        ocrStudioState.activeBoxId = boxId;
+        ocrStudioState.activeBoxId = targetBoxId;
 
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -2476,22 +2808,31 @@ function setupRoiInteractionHandlers() {
             boxX: box.x,
             boxY: box.y,
             boxW: box.width,
-            boxH: box.height
+            boxH: box.height,
+            points: box.points ? JSON.parse(JSON.stringify(box.points)) : null
         };
 
-        if (handle) {
+        if (pin) {
+            ocrStudioState.isDraggingPin = true;
+            ocrStudioState.activePinIdx = parseInt(pin.getAttribute("data-pin-idx"), 10);
+            ocrStudioState.isDraggingRoi = false;
+            ocrStudioState.isResizingRoi = false;
+        } else if (handle) {
             ocrStudioState.isResizingRoi = true;
             ocrStudioState.activeHandle = handle.getAttribute("data-handle");
+            ocrStudioState.isDraggingPin = false;
+            ocrStudioState.isDraggingRoi = false;
         } else {
             ocrStudioState.isDraggingRoi = true;
-            ocrStudioState.activeHandle = null;
+            ocrStudioState.isDraggingPin = false;
+            ocrStudioState.isResizingRoi = false;
         }
 
         e.preventDefault();
     };
 
     const onPointerMove = (e) => {
-        if (!ocrStudioState.isDraggingRoi && !ocrStudioState.isResizingRoi) return;
+        if (!ocrStudioState.isDraggingPin && !ocrStudioState.isDraggingRoi && !ocrStudioState.isResizingRoi) return;
 
         const box = ocrStudioState.boxes.find(b => b.id === ocrStudioState.activeBoxId);
         if (!box) return;
@@ -2502,14 +2843,40 @@ function setupRoiInteractionHandlers() {
         const dx = (clientX - ocrStudioState.dragStart.clientX) / ocrStudioState.dragStart.containerW;
         const dy = (clientY - ocrStudioState.dragStart.clientY) / ocrStudioState.dragStart.containerH;
 
-        if (ocrStudioState.isDraggingRoi) {
-            // Move box
-            let newX = Math.max(0, Math.min(1 - box.width, ocrStudioState.dragStart.boxX + dx));
-            let newY = Math.max(0, Math.min(1 - box.height, ocrStudioState.dragStart.boxY + dy));
-            box.x = parseFloat(newX.toFixed(4));
-            box.y = parseFloat(newY.toFixed(4));
+        if (ocrStudioState.isDraggingPin) {
+            const pIdx = ocrStudioState.activePinIdx;
+            const origPt = ocrStudioState.dragStart.points[pIdx];
+            const newX = parseFloat(Math.max(0, Math.min(1, origPt[0] + dx)).toFixed(4));
+            const newY = parseFloat(Math.max(0, Math.min(1, origPt[1] + dy)).toFixed(4));
+            box.points[pIdx] = [newX, newY];
+
+            const minX = Math.min(...box.points.map(p => p[0]));
+            const maxX = Math.max(...box.points.map(p => p[0]));
+            const minY = Math.min(...box.points.map(p => p[1]));
+            const maxY = Math.max(...box.points.map(p => p[1]));
+            box.x = parseFloat(minX.toFixed(4));
+            box.y = parseFloat(minY.toFixed(4));
+            box.width = parseFloat((maxX - minX).toFixed(4));
+            box.height = parseFloat((maxY - minY).toFixed(4));
+        } else if (ocrStudioState.isDraggingRoi) {
+            const origPoints = ocrStudioState.dragStart.points;
+            if (origPoints) {
+                const minX = Math.min(...origPoints.map(p => p[0]));
+                const maxX = Math.max(...origPoints.map(p => p[0]));
+                const minY = Math.min(...origPoints.map(p => p[1]));
+                const maxY = Math.max(...origPoints.map(p => p[1]));
+
+                const clampDx = Math.max(-minX, Math.min(1 - maxX, dx));
+                const clampDy = Math.max(-minY, Math.min(1 - maxY, dy));
+
+                box.points = origPoints.map(p => [
+                    parseFloat((p[0] + clampDx).toFixed(4)),
+                    parseFloat((p[1] + clampDy).toFixed(4))
+                ]);
+                box.x = parseFloat((ocrStudioState.dragStart.boxX + clampDx).toFixed(4));
+                box.y = parseFloat((ocrStudioState.dragStart.boxY + clampDy).toFixed(4));
+            }
         } else if (ocrStudioState.isResizingRoi) {
-            // Resize box via corner handle
             const h = ocrStudioState.activeHandle;
             let { boxX, boxY, boxW, boxH } = ocrStudioState.dragStart;
 
@@ -2539,6 +2906,12 @@ function setupRoiInteractionHandlers() {
             box.y = parseFloat(Math.max(0, Math.min(1, box.y)).toFixed(4));
             box.width = parseFloat(box.width.toFixed(4));
             box.height = parseFloat(box.height.toFixed(4));
+            box.points = [
+                [box.x, box.y],
+                [parseFloat((box.x + box.width).toFixed(4)), box.y],
+                [parseFloat((box.x + box.width).toFixed(4)), parseFloat((box.y + box.height).toFixed(4))],
+                [box.x, parseFloat((box.y + box.height).toFixed(4))]
+            ];
         }
 
         renderRoiBoxes();
@@ -2546,10 +2919,12 @@ function setupRoiInteractionHandlers() {
     };
 
     const onPointerUp = () => {
-        if (ocrStudioState.isDraggingRoi || ocrStudioState.isResizingRoi) {
+        if (ocrStudioState.isDraggingPin || ocrStudioState.isDraggingRoi || ocrStudioState.isResizingRoi) {
+            ocrStudioState.isDraggingPin = false;
             ocrStudioState.isDraggingRoi = false;
             ocrStudioState.isResizingRoi = false;
             ocrStudioState.activeBoxId = null;
+            ocrStudioState.activePinIdx = null;
             ocrStudioState.activeHandle = null;
             debouncedSaveRoiBoxes(200);
         }
@@ -2647,7 +3022,26 @@ async function autoDetectDisplays() {
         }
 
         if (data.boxes && data.boxes.length > 0) {
-            ocrStudioState.boxes = data.boxes;
+            ocrStudioState.boxes = data.boxes.map(b => {
+                const bw = b.width !== undefined ? b.width : (b.w !== undefined ? b.w : 0.3);
+                const bh = b.height !== undefined ? b.height : (b.h !== undefined ? b.h : 0.2);
+                const bx = b.x !== undefined ? b.x : 0.2;
+                const by = b.y !== undefined ? b.y : 0.2;
+                return {
+                    ...b,
+                    x: bx,
+                    y: by,
+                    width: bw,
+                    height: bh,
+                    mode: b.mode || "rect",
+                    points: (b.points && b.points.length === 4) ? b.points : [
+                        [bx, by],
+                        [parseFloat((bx + bw).toFixed(4)), by],
+                        [parseFloat((bx + bw).toFixed(4)), parseFloat((by + bh).toFixed(4))],
+                        [bx, parseFloat((by + bh).toFixed(4))]
+                    ]
+                };
+            });
             renderRoiBoxes();
             debouncedSaveRoiBoxes(100);
             showToast(`✅ Auto-detected ${data.detected_count || data.boxes.length} digital displays! You can drag boxes to fine-tune.`);
