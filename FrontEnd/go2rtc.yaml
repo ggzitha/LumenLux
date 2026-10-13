@@ -13,7 +13,7 @@ api:
   origin: "*"
 
 webrtc:
-  listen: ":8555"
+  listen: ":8557"
   candidates:
     - stun:8557
 

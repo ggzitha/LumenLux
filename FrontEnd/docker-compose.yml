@@ -38,8 +38,8 @@ services:
       - BECKEND_RPI_PORT=${BECKEND_RPI_PORT:-5000}
     ports:
       - "1984:1984/tcp"
-      - "8557:8555/tcp"
-      - "8557:8555/udp"
+      - "8557:8557/tcp"
+      - "8557:8557/udp"
     networks:
       lumen-net:
         ipv4_address: 10.101.27.3

@@ -31,8 +31,8 @@ RUN mkdir -p /app/data/images /app/data/models /app/data/tessdata
 # Copy application source code
 COPY . .
 
-# Expose web application port
-EXPOSE 8080
+# Expose web application port and WebRTC streaming port
+EXPOSE 8080 8557/tcp 8557/udp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

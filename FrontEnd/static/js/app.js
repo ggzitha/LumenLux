@@ -978,20 +978,32 @@ async function startChamberStream() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // Wait up to 500ms for STUN & host ICE candidates to gather on mobile WiFi
+        // Wait for ICE candidates to gather completely (standard event.candidate null or timeout)
         await new Promise((resolve) => {
             if (pc.iceGatheringState === "complete") {
                 resolve();
-            } else {
-                const checkState = () => {
-                    if (pc.iceGatheringState === "complete") {
-                        pc.removeEventListener("icegatheringstatechange", checkState);
-                        resolve();
-                    }
-                };
-                pc.addEventListener("icegatheringstatechange", checkState);
-                setTimeout(resolve, 500);
+                return;
             }
+            let resolved = false;
+            const done = () => {
+                if (!resolved) {
+                    resolved = true;
+                    resolve();
+                }
+            };
+            const timer = setTimeout(done, 1200);
+            pc.addEventListener("icecandidate", (e) => {
+                if (!e.candidate) {
+                    clearTimeout(timer);
+                    done();
+                }
+            });
+            pc.addEventListener("icegatheringstatechange", () => {
+                if (pc.iceGatheringState === "complete") {
+                    clearTimeout(timer);
+                    done();
+                }
+            });
         });
 
         const res = await fetch("/api/webrtc", {
@@ -1034,7 +1046,7 @@ function fallbackToMjpegStream() {
         img.src = `/stream?t=${Date.now()}`;
     }
 
-    // On mobile devices, periodically retry WebRTC so browser memory is not overwhelmed by uncompressed MJPEG
+    // On mobile devices, retry WebRTC every 12s so browser is not stuck in rapid reconnect loops
     if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && state.camera.enabled && chamberStreamMode === "webrtc") {
         if (!window._webrtcRetryTimer) {
             window._webrtcRetryTimer = setTimeout(() => {
@@ -1043,7 +1055,7 @@ function fallbackToMjpegStream() {
                     console.log("[Stream] Mobile auto-retrying WebRTC stream reconnection...");
                     startChamberStream();
                 }
-            }, 3000);
+            }, 12000);
         }
     }
 }

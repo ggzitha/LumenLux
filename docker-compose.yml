@@ -30,6 +30,23 @@ services:
       autoheal-this-app: "true"
     restart: unless-stopped
 
+  lumenlux-go2rtc:
+    container_name: lumenlux-go2rtc
+    image: alexxit/go2rtc:latest
+    restart: unless-stopped
+    volumes:
+      - ./FrontEnd/go2rtc.yaml:/config/go2rtc.yaml
+    environment:
+      - BECKEND_RPI_IP=${BECKEND_RPI_IP:-192.168.88.21}
+      - BECKEND_RPI_PORT=${BECKEND_RPI_PORT:-5000}
+    ports:
+      - "1984:1984/tcp"
+      - "8557:8557/tcp"
+      - "8557:8557/udp"
+    networks:
+      lumen-net:
+        ipv4_address: 10.101.29.3
+
 networks:
   lumen-net:
     driver: bridge
