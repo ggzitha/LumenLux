@@ -1098,12 +1098,15 @@ body {
     visibility: hidden;
 }
 
-/* Master Unified Action Bar (Snapshot & OCR) */
+/* Master Unified Action Bar (Snapshot) */
 .unified-action-toolbar {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr;
-    gap: 8px;
+    display: flex;
+    justify-content: stretch;
     margin-top: 0.5rem;
+    width: 100%;
+}
+
+.unified-action-toolbar .btn-action-master {
     width: 100%;
 }
 
@@ -1154,23 +1157,50 @@ body {
     box-shadow: none;
 }
 
-#btnOcrCapture.btn-action-master {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(236, 72, 153, 0.18));
-    border-color: rgba(139, 92, 246, 0.35);
+/* OCR Studio Toolbar Button (Matching exact .btn-icon rounded style & theme) */
+.btn-icon.btn-ocr-studio {
     color: #c084fc;
+    background: rgba(139, 92, 246, 0.12);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
-#btnOcrCapture.btn-action-master:hover {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(236, 72, 153, 0.3));
+.btn-icon.btn-ocr-studio:hover {
+    background: rgba(139, 92, 246, 0.25);
     border-color: #c084fc;
-    box-shadow: 0 0 20px rgba(192, 132, 252, 0.3);
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.35);
 }
 
-#btnOcrCapture.btn-action-master.unlocked {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(0, 242, 254, 0.2));
+.btn-icon.btn-ocr-studio.unlocked,
+.btn-icon.btn-ocr-studio.active {
+    background: rgba(16, 185, 129, 0.18);
     border-color: var(--neon-green);
     color: var(--neon-green);
-    box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+}
+
+@media (max-width: 1024px), (pointer: coarse) {
+    /* Ensure OCR button never renders inside Raspberry Pi chamber toolbar on mobile */
+    #chamberToolbar > #btnOcrCapture {
+        display: none !important;
+    }
+
+    /* When moved below device camera buttons on mobile: full width with exact rounded border */
+    .camera-slot > #btnOcrCapture,
+    .multi-camera-stage > #btnOcrCapture {
+        width: 100% !important;
+        flex: none !important;
+        margin-top: 8px !important;
+        padding: 9px 12px !important;
+        border-radius: var(--radius-sm) !important;
+        font-size: 0.82rem !important;
+        font-weight: 700 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 6px !important;
+        box-sizing: border-box !important;
+    }
 }
 
 /* Floating Drag Handle for Assistive Touch (Hidden on Desktop) */
@@ -1182,24 +1212,24 @@ body {
 @media (max-width: 1024px), (pointer: coarse) {
     .unified-action-toolbar {
         position: fixed !important;
-        z-index: 9999 !important;
+        z-index: 99990 !important; /* Always floating on top of all panels, including OCR Studio */
         display: flex !important;
         flex-direction: column !important;
-        gap: 6px !important;
-        padding: 5px 8px 8px 8px !important;
-        background: rgba(8, 14, 26, 0.88) !important;
+        gap: 4px !important;
+        padding: 5px 8px 7px 8px !important;
+        background: rgba(8, 14, 26, 0.92) !important;
         backdrop-filter: blur(18px) !important;
         -webkit-backdrop-filter: blur(18px) !important;
-        border: 1px solid rgba(0, 242, 254, 0.45) !important;
+        border: 1px solid rgba(0, 242, 254, 0.5) !important;
         border-radius: 18px !important;
-        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.75), 0 0 18px rgba(0, 242, 254, 0.22) !important;
+        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.85), 0 0 18px rgba(0, 242, 254, 0.28) !important;
         touch-action: none !important;
         overscroll-behavior: none !important;
         user-select: none !important;
         -webkit-user-select: none !important;
         width: auto !important;
-        min-width: 160px !important;
-        max-width: 210px !important;
+        min-width: 110px !important;
+        max-width: 140px !important;
         cursor: grab !important;
         margin: 0 !important;
         transition: box-shadow 0.18s ease, border-color 0.18s ease;
@@ -1224,7 +1254,7 @@ body {
     }
 
     .drag-grip-dots {
-        width: 32px;
+        width: 28px;
         height: 3.5px;
         background: rgba(0, 242, 254, 0.65);
         border-radius: 4px;
@@ -1236,7 +1266,7 @@ body {
         font-size: 0.75rem !important;
         border-radius: 12px !important;
         width: 100% !important;
-        min-height: 38px !important;
+        min-height: 36px !important;
         box-sizing: border-box !important;
     }
 
@@ -1265,6 +1295,7 @@ body {
     white-space: nowrap;
 }
 
+.slot-toolbar .btn-icon span,
 .viewport-toolbar .btn-icon span {
     white-space: nowrap;
     overflow: hidden;
@@ -3547,7 +3578,8 @@ input[type="number"] {
 .roi-poly {
     pointer-events: auto;
     cursor: move;
-    stroke-width: 2.2;
+    vector-effect: non-scaling-stroke;
+    stroke-width: 1.5px;
     transition: fill 0.15s, stroke 0.15s;
     touch-action: none !important;
 }
@@ -3560,45 +3592,45 @@ input[type="number"] {
 .roi-poly.status-success {
     fill: rgba(16, 185, 129, 0.18);
     stroke: #10b981;
-    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.5));
+    filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.4));
 }
 
 .roi-poly.status-warning {
     fill: rgba(234, 179, 8, 0.18);
     stroke: #eab308;
-    filter: drop-shadow(0 0 8px rgba(234, 179, 8, 0.5));
+    filter: drop-shadow(0 0 6px rgba(234, 179, 8, 0.4));
 }
 
 .roi-poly.status-error {
     fill: rgba(239, 68, 68, 0.18);
     stroke: #ef4444;
-    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.5));
+    filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.4));
 }
 
 /* 4-Corner Draggable Pins (Trapezoid / Skew Perspective Mode) */
 .roi-pin {
     position: absolute;
-    width: 18px;
-    height: 18px;
+    width: 15px;
+    height: 15px;
     border-radius: 50%;
     background: #ffffff;
-    border: 2.5px solid #0f172a;
+    border: 2px solid #0f172a;
     transform: translate(-50%, -50%);
     cursor: grab;
     pointer-events: auto;
-    z-index: 29;
-    box-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
-    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    z-index: 40;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+    transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
     touch-action: none !important;
     user-select: none !important;
     -webkit-user-select: none !important;
 }
 
-/* Invisible enlarged 44px hit-target for mobile fingers */
+/* Compact clean hit-target for fingers without overlapping action buttons */
 .roi-pin::before {
     content: '';
     position: absolute;
-    inset: -14px;
+    inset: -10px;
     border-radius: 50%;
     background: transparent;
     pointer-events: auto;

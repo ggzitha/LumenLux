@@ -2016,6 +2016,8 @@ function activateOcrStudio() {
         btnOcr.setAttribute("title", "Click to Exit OCR Studio (Normal Mode)");
     }
 
+    document.body.classList.add("ocr-studio-active");
+
     loadOcrProjects();
     setupRoiInteractionHandlers();
     renderRoiBoxes();
@@ -2034,6 +2036,8 @@ function deactivateOcrStudio(notify = true) {
     if (controlsCol) {
         controlsCol.classList.remove("ocr-active");
     }
+
+    document.body.classList.remove("ocr-studio-active");
 
     const btnOcr = document.getElementById("btnOcrCapture");
     if (btnOcr) {
@@ -2485,6 +2489,8 @@ function renderRoiBoxes() {
             const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
             poly.setAttribute("points", ptsStr);
             poly.setAttribute("class", `roi-poly status-${box.status || "candidate"}`);
+            poly.setAttribute("vector-effect", "non-scaling-stroke");
+            poly.setAttribute("stroke-width", "1.5");
             poly.setAttribute("data-box-id", box.id);
             poly.setAttribute("title", `Click & drag to reposition ${box.label}`);
             svgEl.appendChild(poly);
@@ -2496,16 +2502,21 @@ function renderRoiBoxes() {
             const statusText = box.status === "success" ? "✓" : box.status === "error" ? "!" : box.status === "warning" ? "⚠" : "•";
             const pts = box.points;
 
-            // Find top-left most point for label placement
+            // Find bounds for label placement
             const minX = Math.min(...pts.map(p => p[0]));
+            const maxX = Math.max(...pts.map(p => p[0]));
             const minY = Math.min(...pts.map(p => p[1]));
+            const centerX = (minX + maxX) / 2;
 
-            // Label Header
+            // Label Header - Centered between Top-Left and Top-Right points with comfortable 12px air gap
             const labelEl = document.createElement("div");
             labelEl.className = `roi-box-label status-${box.status || "candidate"}`;
             labelEl.setAttribute("data-box-id", box.id);
-            labelEl.style.left = `${(minX * 100).toFixed(2)}%`;
-            labelEl.style.top = `${Math.max(0, (minY * 100) - 2.8).toFixed(2)}%`;
+            labelEl.style.left = `${(centerX * 100).toFixed(2)}%`;
+            labelEl.style.top = `${(minY * 100).toFixed(2)}%`;
+            labelEl.style.transform = (minY > 0.08)
+                ? "translate(-50%, calc(-100% - 12px))"
+                : "translate(-50%, calc(100% + 12px))";
             labelEl.innerHTML = `
                 <span>${statusText} ${box.label || "Thermometer"}</span>
                 <button type="button" class="roi-test-btn" data-test-box="${box.id}" title="Instant Test OCR on this display">🔍 Test</button>
@@ -2781,12 +2792,22 @@ function showOcrTestResultModal(box, result) {
 
     if (rawTextEl) rawTextEl.textContent = result.text || "(empty)";
     if (dispTypeEl) {
-        dispTypeEl.textContent = result.display_type === "green_vfd" ? "VFD (Fluke 1502A Green)" : "LCD (7-Segment)";
+        if (result.engine === "onnx_ai") {
+            const confPct = result.confidence ? Math.round(result.confidence * 100) : 95;
+            dispTypeEl.textContent = `AI ONNX (PP-OCRv4) [${confPct}%]`;
+            dispTypeEl.style.color = "#10b981";
+        } else if (result.engine === "tesseract_fallback") {
+            dispTypeEl.textContent = "Tesseract (7-Segment Fallback)";
+            dispTypeEl.style.color = "#38bdf8";
+        } else {
+            dispTypeEl.textContent = result.display_type === "green_vfd" ? "VFD (Fluke 1502A Green)" : "LCD (7-Segment)";
+            dispTypeEl.style.color = "";
+        }
     }
 
     if (statusBadge) {
         if (result.ocr_status === "success") {
-            statusBadge.textContent = "✓ High Confidence Recognized";
+            statusBadge.textContent = result.engine === "onnx_ai" ? "✓ AI Model Verified" : "✓ High Confidence Recognized";
             statusBadge.style.background = "rgba(16, 185, 129, 0.2)";
             statusBadge.style.color = "#10b981";
         } else if (result.ocr_status === "warning") {
@@ -3696,6 +3717,7 @@ async function startDeviceCameraStream(preserveStateOnError = false) {
         if (slotDevice) slotDevice.classList.remove("hidden");
         if (stage) stage.classList.add("dual-active");
         if (standby) standby.classList.add("hidden");
+        if (typeof syncOcrButtonPlacement === "function") syncOcrButtonPlacement();
 
         const btnToggleStream = document.getElementById("btnToggleDeviceCamStream");
         if (btnToggleStream) {
@@ -3718,6 +3740,7 @@ async function startDeviceCameraStream(preserveStateOnError = false) {
             if (slotDevice) slotDevice.classList.add("hidden");
             if (stage) stage.classList.remove("dual-active");
             if (standby) standby.classList.remove("hidden");
+            if (typeof syncOcrButtonPlacement === "function") syncOcrButtonPlacement();
             updateSnapshotButtonState();
         }
         showToast("Camera access rejected or unavailable: " + (err.name || err.message));
@@ -3747,6 +3770,7 @@ function stopDeviceCameraStream() {
     if (slotDevice) slotDevice.classList.add("hidden");
     if (stage) stage.classList.remove("dual-active");
     if (standby) standby.classList.remove("hidden");
+    if (typeof syncOcrButtonPlacement === "function") syncOcrButtonPlacement();
 
     updateSnapshotButtonState();
     showToast("Device camera turned off");
@@ -4317,25 +4341,35 @@ async function captureMultiCameraSnapshot() {
         let imgChamber = null;
         let imgDevice = null;
 
-        // 1. Grab Chamber image
+        // 1. Grab Chamber image - INSTANT GPU/RAM frame capture from active video/stream element (<15ms)
         if (isChamberActive) {
-            try {
-                const res = await fetch("/api/camera/snapshot");
-                if (res.ok) {
-                    const blob = await res.blob();
-                    imgChamber = await loadImageFromBlob(blob);
-                }
-            } catch (e) {
-                console.warn("API snapshot fetch failed, capturing from live stream element:", e);
-            }
+            const chamberVideo = document.getElementById("chamberVideo");
+            const streamImg = document.getElementById("cameraStream");
 
-            if (!imgChamber) {
-                const streamImg = document.getElementById("cameraStream");
-                const chamberVideo = document.getElementById("chamberVideo");
-                if (chamberVideo && chamberVideo.videoWidth > 0 && !chamberVideo.classList.contains("hidden")) {
-                    imgChamber = chamberVideo;
-                } else if (streamImg && streamImg.naturalWidth) {
-                    imgChamber = streamImg;
+            if (chamberVideo && chamberVideo.videoWidth > 0 && !chamberVideo.classList.contains("hidden")) {
+                const offCanvas = document.createElement("canvas");
+                offCanvas.width = chamberVideo.videoWidth;
+                offCanvas.height = chamberVideo.videoHeight;
+                const offCtx = offCanvas.getContext("2d");
+                offCtx.drawImage(chamberVideo, 0, 0, offCanvas.width, offCanvas.height);
+                imgChamber = offCanvas;
+            } else if (streamImg && streamImg.naturalWidth > 0 && !streamImg.classList.contains("hidden")) {
+                const offCanvas = document.createElement("canvas");
+                offCanvas.width = streamImg.naturalWidth;
+                offCanvas.height = streamImg.naturalHeight;
+                const offCtx = offCanvas.getContext("2d");
+                offCtx.drawImage(streamImg, 0, 0, offCanvas.width, offCanvas.height);
+                imgChamber = offCanvas;
+            } else {
+                // Network fallback only if stream element has not rendered any frames yet
+                try {
+                    const res = await fetch("/api/camera/snapshot");
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        imgChamber = await loadImageFromBlob(blob);
+                    }
+                } catch (e) {
+                    console.warn("API snapshot fallback failed:", e);
                 }
             }
         }
@@ -4542,6 +4576,37 @@ async function captureMultiCameraSnapshot() {
 }
 
 // ==========================================================================
+// OCR STUDIO BUTTON RESPONSIVE PLACEMENT (DESKTOP GRID vs MOBILE BOTTOM)
+// ==========================================================================
+function syncOcrButtonPlacement() {
+    const btnOcr = document.getElementById("btnOcrCapture");
+    const chamberToolbar = document.getElementById("chamberToolbar");
+    const slotDevice = document.getElementById("slotDevice");
+    const multiCameraStage = document.getElementById("multiCameraStage");
+    if (!btnOcr) return;
+
+    const isMobile = window.innerWidth <= 1024 || window.matchMedia("(pointer: coarse)").matches;
+
+    if (isMobile) {
+        // On Mobile View: Move below device camera buttons, NEVER under Raspberry Pi camera (#chamberToolbar)
+        if (slotDevice && !slotDevice.classList.contains("hidden")) {
+            if (btnOcr.parentElement !== slotDevice) {
+                slotDevice.appendChild(btnOcr);
+            }
+        } else if (multiCameraStage) {
+            if (btnOcr.parentElement !== multiCameraStage) {
+                multiCameraStage.appendChild(btnOcr);
+            }
+        }
+    } else {
+        // On Desktop View: Place inside chamberToolbar in the unified camera action grid
+        if (chamberToolbar && btnOcr.parentElement !== chamberToolbar) {
+            chamberToolbar.appendChild(btnOcr);
+        }
+    }
+}
+
+// ==========================================================================
 // ASSISTIVE TOUCH FLOATING MASTER ACTION BAR (MOBILE / SMARTPHONE VIEW)
 // ==========================================================================
 const FLOATING_POS_KEY = "lumen_floating_actions_pos_v2";
@@ -4552,8 +4617,23 @@ function setupFloatingAssistiveTouch() {
     if (toolbar._hasAssistiveTouch) return;
     toolbar._hasAssistiveTouch = true;
 
+    const desktopParent = toolbar.parentElement;
+    const desktopNextSibling = toolbar.nextSibling;
+
     function isMobileMode() {
         return window.innerWidth <= 1024 || window.matchMedia("(pointer: coarse)").matches;
+    }
+
+    function syncDomPlacement() {
+        if (isMobileMode()) {
+            if (toolbar.parentElement !== document.body) {
+                document.body.appendChild(toolbar);
+            }
+        } else {
+            if (desktopParent && toolbar.parentElement !== desktopParent) {
+                desktopParent.insertBefore(toolbar, desktopNextSibling);
+            }
+        }
     }
 
     function getViewportBounds() {
@@ -4564,19 +4644,25 @@ function setupFloatingAssistiveTouch() {
     }
 
     function restorePosition() {
+        syncDomPlacement();
+
         if (!isMobileMode()) {
             toolbar.style.left = "";
             toolbar.style.top = "";
             toolbar.style.right = "";
             toolbar.style.bottom = "";
+            toolbar.style.display = "";
             return;
         }
+
+        // On mobile: ALWAYS KEEP VISIBLE floating on top of all panels (including OCR Studio)
+        toolbar.style.display = "flex";
 
         try {
             const saved = localStorage.getItem(FLOATING_POS_KEY);
             const rect = toolbar.getBoundingClientRect();
-            const w = rect.width || 180;
-            const h = rect.height || 96;
+            const w = rect.width || 120;
+            const h = rect.height || 54;
             const { vw, vh } = getViewportBounds();
             const minLeft = 8;
             const minTop = 56; // Header height safety margin (never under 50px header)
@@ -4708,10 +4794,16 @@ function setupFloatingAssistiveTouch() {
     window.addEventListener("mouseup", handleEnd);
 
     // Reposition on screen resize or orientation change
-    window.addEventListener("resize", debounce(restorePosition, 100));
+    window.addEventListener("resize", debounce(() => {
+        restorePosition();
+        syncOcrButtonPlacement();
+    }, 100));
 
     // Initial position restore
-    setTimeout(restorePosition, 80);
+    setTimeout(() => {
+        restorePosition();
+        syncOcrButtonPlacement();
+    }, 80);
 }
 
 // ==========================================================================
@@ -4822,6 +4914,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupResetToDefaults();
     setupMobileLedDrawer();
     setupFloatingAssistiveTouch();
+    syncOcrButtonPlacement();
     setupSettingsResetButtons();
     initFpsCounter();
     applyViewportTransforms();

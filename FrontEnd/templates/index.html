@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/main.css?v=6.0">
+    <link rel="stylesheet" href="/static/css/main.css?v=6.1">
 </head>
 
 <body>
@@ -785,6 +785,13 @@
                             </svg>
                             <span>Grid</span>
                         </button>
+                        <button class="btn-icon btn-ocr-studio" id="btnOcrCapture" title="OCR Text Recognition & Calibration Studio">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2zM7 11h10v2H7zm2-3h6v2H9zm-1 6h8v2H8z" />
+                            </svg>
+                            <span>OCR Studio</span>
+                        </button>
                     </div>
                 </div> <!-- /slotChamber -->
 
@@ -1147,7 +1154,7 @@
                 </div> <!-- /slotDevice -->
             </div> <!-- /multiCameraStage -->
 
-            <!-- Unified Multi-Camera Master Action Bar / Mobile Assistive Touch Floating Hub -->
+            <!-- Unified Multi-Camera Master Action Bar / Mobile Assistive Touch Floating Hub (Snap / Catch It! only) -->
             <div class="unified-action-toolbar" id="unifiedActionToolbar">
                 <div class="floating-drag-handle" id="floatingDragHandle" title="Drag to Reposition (Assistive Touch)">
                     <span class="drag-grip-dots"></span>
@@ -1159,13 +1166,6 @@
                             d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
                     </svg>
                     <span id="lblSnapshotText">Catch It!</span>
-                </button>
-                <button class="btn-action-master" id="btnOcrCapture" title="OCR Text Recognition">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M3 5v4h2V5h4V3H5c-1.1 0-2 .9-2 2zm2 10H3v4c0 1.1.9 2 2 2h4v-2H5v-4zm14 4h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5c0-1.1-.9-2-2-2zM7 11h10v2H7zm2-3h6v2H9zm-1 6h8v2H8z" />
-                    </svg>
-                    <span>OCR Studio</span>
                 </button>
             </div>
         </section>
@@ -1729,7 +1729,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=6.0"></script>
+    <script src="/static/js/app.js?v=6.1"></script>
 </body>
 
 </html>

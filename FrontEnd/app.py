@@ -1474,6 +1474,8 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
             "ocr_status": ocr_res.get("status", "error"),
             "text": ocr_res.get("text", "N/A"),
             "value": ocr_res.get("value"),
+            "engine": ocr_res.get("engine", "tesseract"),
+            "confidence": ocr_res.get("confidence", 0.0),
             "display_type": ocr_res.get("display_type", "standard_lcd"),
             "crop_base64": crop_b64
         })
