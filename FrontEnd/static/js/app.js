@@ -166,13 +166,40 @@ function debounce(func, wait) {
 function showToast(message) {
     const container = document.getElementById("toastContainer");
     if (!container) return;
+
+    // Desktop: Maksimal 5 toast terbaru di posisi default (kanan bawah)
+    // Mobile: Maksimal 3 toast terbaru di pojok kanan atas
+    const isMobile = window.innerWidth <= 860 || (window.matchMedia && window.matchMedia("(max-width: 860px), (orientation: portrait)").matches);
+    const maxToasts = isMobile ? 3 : 5;
+
+    // Bersihkan notifikasi tertua jika sudah mencapai batas kuota
+    while (container.children.length >= maxToasts) {
+        const oldest = container.firstElementChild;
+        if (oldest) {
+            oldest.remove();
+        } else {
+            break;
+        }
+    }
+
     const toast = document.createElement("div");
     toast.className = "toast";
     toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => {
+
+    // Klik/tap untuk langsung menutup pop-up seketika
+    toast.addEventListener("click", () => {
         toast.style.opacity = "0";
-        setTimeout(() => toast.remove(), 300);
+        setTimeout(() => toast.remove(), 150);
+    });
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        if (toast.parentNode) {
+            toast.style.opacity = "0";
+            toast.style.transform = isMobile ? "translateY(-15px) translateX(15px)" : "translateX(25px)";
+            setTimeout(() => toast.remove(), 250);
+        }
     }, 2800);
 }
 
@@ -951,7 +978,7 @@ async function startChamberStream() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // Wait up to 300ms for STUN & host ICE candidates to gather
+        // Wait up to 500ms for STUN & host ICE candidates to gather on mobile WiFi
         await new Promise((resolve) => {
             if (pc.iceGatheringState === "complete") {
                 resolve();
@@ -963,7 +990,7 @@ async function startChamberStream() {
                     }
                 };
                 pc.addEventListener("icegatheringstatechange", checkState);
-                setTimeout(resolve, 300);
+                setTimeout(resolve, 500);
             }
         });
 
@@ -1005,6 +1032,19 @@ function fallbackToMjpegStream() {
     img.classList.remove("hidden");
     if (!img.src || !img.src.includes("/stream")) {
         img.src = `/stream?t=${Date.now()}`;
+    }
+
+    // On mobile devices, periodically retry WebRTC so browser memory is not overwhelmed by uncompressed MJPEG
+    if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && state.camera.enabled && chamberStreamMode === "webrtc") {
+        if (!window._webrtcRetryTimer) {
+            window._webrtcRetryTimer = setTimeout(() => {
+                window._webrtcRetryTimer = null;
+                if (state.camera.enabled && !chamberPeerConnection) {
+                    console.log("[Stream] Mobile auto-retrying WebRTC stream reconnection...");
+                    startChamberStream();
+                }
+            }, 3000);
+        }
     }
 }
 
@@ -1690,11 +1730,20 @@ let initialLightsSynced = false;
 let initialResolutionSynced = false;
 
 async function pollSystemStatus() {
-    const start = performance.now();
+    const pingStart = performance.now();
+    fetch("/api/ping")
+        .then(() => {
+            const netRtt = Math.round(performance.now() - pingStart);
+            const latencyText = document.getElementById("latencyText");
+            if (latencyText && state.system.online) {
+                latencyText.textContent = `${netRtt}ms`;
+            }
+        })
+        .catch(() => {});
+
     try {
         const res = await fetch("/api/status");
         const data = await res.json();
-        const latency = Math.round(performance.now() - start);
 
         const statusPill = document.getElementById("statusPill");
         const statusDot = document.getElementById("statusDot");
@@ -1707,7 +1756,6 @@ async function pollSystemStatus() {
             state.system.online = true;
             statusDot.className = "pill-dot online";
             statusText.textContent = "CONNECTED";
-            latencyText.textContent = `${latency}ms`;
 
             if (statusDotMobile) statusDotMobile.className = "pill-dot online";
             if (statusTextMobile) statusTextMobile.textContent = "LIVE";
@@ -2667,10 +2715,11 @@ async function testBoxOcr(boxId) {
             : document.getElementById("chamberVideo");
         const streamImg = document.getElementById("cameraStream");
 
-        // Render live camera stream to a standard 16:9 canvas (1920x1080)
-        // that 100% matches what is displayed inside the 16:9 viewport card where pins were placed
-        const slotW = 1920;
-        const slotH = 1080;
+        // Render live camera stream to a standard 16:9 canvas
+        // Scaled to 1280x720 on mobile to prevent browser tab out-of-memory crash
+        const isMobile = window.innerWidth <= 860 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+        const slotW = isMobile ? 1280 : 1920;
+        const slotH = isMobile ? 720 : 1080;
         const testCanvas = document.createElement("canvas");
         testCanvas.width = slotW;
         testCanvas.height = slotH;
@@ -2707,7 +2756,7 @@ async function testBoxOcr(boxId) {
             const drawH2 = h2 * scale2;
             tCtx.drawImage(video, -drawW2 / 2, -drawH2 / 2, drawW2, drawH2);
             tCtx.restore();
-            imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+            imageBase64 = testCanvas.toDataURL("image/jpeg", isMobile ? 0.82 : 0.88);
         } else if (!isDevice) {
             const hasVideo = video && video.videoWidth > 0 && !video.classList.contains("hidden");
             const srcEl = hasVideo ? video : streamImg;
@@ -2727,9 +2776,11 @@ async function testBoxOcr(boxId) {
                 const drawH1 = h1 * scale1;
                 tCtx.drawImage(srcEl, -drawW1 / 2, -drawH1 / 2, drawW1, drawH1);
                 tCtx.restore();
-                imageBase64 = testCanvas.toDataURL("image/jpeg", 0.95);
+                imageBase64 = testCanvas.toDataURL("image/jpeg", isMobile ? 0.82 : 0.88);
             }
         }
+        testCanvas.width = 0;
+        testCanvas.height = 0;
     } catch (e) {
         console.warn("Could not capture live video frame, backend will use latest project snapshot:", e);
     }
@@ -2794,7 +2845,8 @@ function showOcrTestResultModal(box, result) {
     if (dispTypeEl) {
         if (result.engine === "onnx_ai") {
             const confPct = result.confidence ? Math.round(result.confidence * 100) : 95;
-            dispTypeEl.textContent = `AI ONNX (PP-OCRv4) [${confPct}%]`;
+            const modelName = (result.model_version || "PP-OCRv6").toUpperCase();
+            dispTypeEl.textContent = `AI ONNX (${modelName}) [${confPct}%]`;
             dispTypeEl.style.color = "#10b981";
         } else if (result.engine === "tesseract_fallback") {
             dispTypeEl.textContent = "Tesseract (7-Segment Fallback)";

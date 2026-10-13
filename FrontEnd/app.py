@@ -384,6 +384,8 @@ api:
 
 webrtc:
   listen: ":8555"
+  candidates:
+    - stun:8557
 
 ffmpeg:
   bin: "ffmpeg"
@@ -878,11 +880,27 @@ async def user_heartbeat(user: str = Depends(require_auth)):
     }
 
 
+@app.get("/api/ping")
+async def ping_network():
+    """Ultra-lightweight ping endpoint for genuine network RTT latency measurement."""
+    return {"status": "pong", "time": time.time()}
+
+
+_status_cache = {"data": None, "timestamp": 0.0}
+
+
 @app.get("/api/status")
 async def proxy_status(user: str = Depends(require_auth)):
+    now = time.time()
+    if _status_cache["data"] and (now - _status_cache["timestamp"] < 2.5):
+        return _status_cache["data"]
+
     try:
         res = await backend_client.get("/api/status", timeout=4.0)
-        return res.json()
+        data = res.json()
+        _status_cache["data"] = data
+        _status_cache["timestamp"] = now
+        return data
     except Exception as e:
         return {
             "status": "offline",
@@ -1477,6 +1495,7 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
             "engine": ocr_res.get("engine", "tesseract"),
             "confidence": ocr_res.get("confidence", 0.0),
             "display_type": ocr_res.get("display_type", "standard_lcd"),
+            "model_version": ocr_res.get("model_version", "v6_small"),
             "crop_base64": crop_b64
         })
     except Exception as e:

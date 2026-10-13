@@ -286,15 +286,24 @@ body {
         flex: 1;
         min-height: 0;
         max-height: calc(100% - 48px);
-        overflow: hidden;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+    }
+
+    .multi-camera-stage::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .multi-camera-stage::-webkit-scrollbar-thumb {
+        background: rgba(0, 242, 254, 0.2);
+        border-radius: 4px;
     }
 
     .viewport-card {
-        flex: 1;
-        min-height: 0;
-        max-height: 100%;
-        aspect-ratio: auto !important;
-        /* Scale naturally inside the container */
+        width: 100%;
+        max-height: calc(100vh - 230px) !important;
+        aspect-ratio: 16 / 9 !important;
+        margin: auto;
     }
 
     .slot-toolbar {
@@ -984,7 +993,19 @@ body {
         display: grid !important;
         grid-template-columns: 1fr 1fr !important;
         gap: 12px !important;
-        align-items: stretch !important;
+        align-items: center !important;
+    }
+
+    .multi-camera-stage.dual-active .camera-slot {
+        justify-content: center !important;
+        min-height: 0 !important;
+    }
+
+    .multi-camera-stage.dual-active .viewport-card {
+        aspect-ratio: 16 / 9 !important;
+        width: 100% !important;
+        height: auto !important;
+        max-height: calc(100vh - 240px) !important;
     }
 }
 
@@ -1841,17 +1862,19 @@ input[type="number"] {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    z-index: 1000;
+    z-index: 10000;
     display: flex;
     flex-direction: column;
     gap: 8px;
     pointer-events: none;
+    max-width: 420px;
 }
 
 .toast {
     padding: 10px 18px;
     background: rgba(16, 23, 38, 0.95);
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--neon-cyan);
     border-radius: var(--radius-sm);
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
@@ -1859,7 +1882,10 @@ input[type="number"] {
     font-size: 0.85rem;
     font-weight: 500;
     pointer-events: auto;
-    animation: slideIn 0.3s ease;
+    cursor: pointer;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    word-break: break-word;
 }
 
 @keyframes slideIn {
@@ -1871,6 +1897,37 @@ input[type="number"] {
     to {
         transform: translateX(0);
         opacity: 1;
+    }
+}
+
+/* Mobile Toast Notifications (Pojok Kanan Atas, Maks 3 Pop-up) */
+@media (max-width: 860px), (orientation: portrait) {
+    .toast-container {
+        top: max(14px, env(safe-area-inset-top, 14px));
+        right: 14px;
+        bottom: auto;
+        left: auto;
+        gap: 6px;
+        max-width: min(340px, calc(100vw - 28px));
+    }
+
+    .toast {
+        padding: 8px 14px;
+        font-size: 0.78rem;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.7);
+        animation: slideInMobile 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideInMobile {
+        from {
+            transform: translateY(-20px) translateX(20px);
+            opacity: 0;
+        }
+
+        to {
+            transform: translateY(0) translateX(0);
+            opacity: 1;
+        }
     }
 }
 

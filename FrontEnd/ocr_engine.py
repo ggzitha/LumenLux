@@ -59,23 +59,71 @@ MODELS_DIR = Path(os.environ.get("MODELS_DIR", Path(__file__).resolve().parent /
 
 class OnnxOcrEngine:
     """
-    Lightweight ONNX AI OCR Engine (PP-OCRv4 CPU optimized).
-    Tuned for digital LCD/VFD/LED display recognition with 24-core CPU multi-threading.
+    High-performance ONNX AI OCR Engine supporting PP-OCRv6 Medium and PP-OCRv4.
+    Tuned for digital LCD/VFD/LED display recognition with multi-threaded CPU execution.
     """
     def __init__(self, models_dir: Optional[Path] = None):
         self.models_dir = Path(models_dir) if models_dir else MODELS_DIR
         self.session = None
+        self.det_session = None
         self.char_list: List[str] = []
         self._initialized = False
+        self.model_version: str = os.environ.get("OCR_MODEL_VERSION", "v6").strip().lower()
 
     def initialize(self) -> bool:
         if not HAS_ONNX or ort is None:
             return False
 
-        rec_model_path = self.models_dir / "ch_PP-OCRv4_rec_infer.onnx"
-        keys_path = self.models_dir / "ppocr_keys_v1.txt"
+        v6_small_rec = self.models_dir / "ch_PP-OCRv6_small_rec_infer.onnx"
+        v6_small_det = self.models_dir / "ch_PP-OCRv6_small_det_infer.onnx"
+        v6_tiny_rec = self.models_dir / "ch_PP-OCRv6_tiny_rec_infer.onnx"
+        v6_tiny_det = self.models_dir / "ch_PP-OCRv6_tiny_det_infer.onnx"
+        v6_med_rec = self.models_dir / "ch_PP-OCRv6_medium_rec_infer.onnx"
+        v6_med_det = self.models_dir / "ch_PP-OCRv6_medium_det_infer.onnx"
+        v6_keys_path = self.models_dir / "ppocrv6_keys.txt"
 
-        if not rec_model_path.is_file() or not keys_path.is_file():
+        v4_rec_path = self.models_dir / "ch_PP-OCRv4_rec_infer.onnx"
+        v4_det_path = self.models_dir / "ch_PP-OCRv4_det_infer.onnx"
+        v4_keys_path = self.models_dir / "ppocr_keys_v1.txt"
+
+        target_version = os.environ.get("OCR_MODEL_VERSION", "v6").strip().lower()
+
+        # Selection hierarchy: tiny, small, medium, v4
+        if target_version in ("v6_tiny", "tiny") and v6_tiny_rec.is_file() and v6_keys_path.is_file():
+            rec_model_path = v6_tiny_rec
+            det_model_path = v6_tiny_det if v6_tiny_det.is_file() else v4_det_path
+            keys_path = v6_keys_path
+            self.model_version = "v6_tiny"
+        elif (target_version in ("v6_small", "small", "v6") and v6_small_rec.is_file() and v6_keys_path.is_file()):
+            rec_model_path = v6_small_rec
+            det_model_path = v6_small_det if v6_small_det.is_file() else v6_med_det if v6_med_det.is_file() else v4_det_path
+            keys_path = v6_keys_path
+            self.model_version = "v6_small"
+        elif (target_version in ("v6_medium", "medium") and v6_med_rec.is_file() and v6_keys_path.is_file()) or (target_version == "v6" and v6_med_rec.is_file()):
+            rec_model_path = v6_med_rec
+            det_model_path = v6_med_det if v6_med_det.is_file() else v4_det_path
+            keys_path = v6_keys_path
+            self.model_version = "v6_medium"
+        elif v4_rec_path.is_file() and v4_keys_path.is_file():
+            rec_model_path = v4_rec_path
+            det_model_path = v4_det_path
+            keys_path = v4_keys_path
+            self.model_version = "v4"
+        elif v6_small_rec.is_file():
+            rec_model_path = v6_small_rec
+            det_model_path = v6_small_det
+            keys_path = v6_keys_path
+            self.model_version = "v6_small"
+        elif v6_med_rec.is_file():
+            rec_model_path = v6_med_rec
+            det_model_path = v6_med_det
+            keys_path = v6_keys_path
+            self.model_version = "v6_medium"
+        else:
+            rec_model_path = v4_rec_path
+            det_model_path = v4_det_path
+            keys_path = v4_keys_path
+            self.model_version = "v4"
             self._ensure_models_exist(rec_model_path, keys_path)
 
         if not rec_model_path.is_file() or not keys_path.is_file():
@@ -88,17 +136,29 @@ class OnnxOcrEngine:
             self.char_list = ["blank"] + lines + [" "]
 
             opts = ort.SessionOptions()
-            cpu_threads = max(2, min(os.cpu_count() or 4, 16))
+            # Default to 4 threads max: Prevents CPU 100% saturation and prevents freezing video/browser streams
+            target_threads = int(os.environ.get("ONNX_CPU_THREADS", "4"))
+            cpu_threads = max(1, min(os.cpu_count() or 4, target_threads))
             opts.intra_op_num_threads = cpu_threads
-            opts.inter_op_num_threads = 2
+            opts.inter_op_num_threads = 1
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             self.session = ort.InferenceSession(str(rec_model_path), sess_options=opts, providers=["CPUExecutionProvider"])
+
+            if det_model_path.is_file():
+                try:
+                    self.det_session = ort.InferenceSession(str(det_model_path), sess_options=opts, providers=["CPUExecutionProvider"])
+                    logger.info("[ONNX AI OCR] Loaded %s text detection model from %s", det_model_path.name, det_model_path)
+                except Exception as ex:
+                    logger.warning("[ONNX AI OCR] Could not load det model: %s", ex)
+
             self._initialized = True
-            logger.info("[ONNX AI OCR] Loaded PP-OCRv4 model on CPU (%d threads) from %s", cpu_threads, rec_model_path)
+            det_name = det_model_path.stem if det_model_path.is_file() else "None"
+            logger.info("[ONNX AI OCR] Loaded ONNX OCR models on CPU (%d threads) [TIER: %s, REC: %s, DET: %s]", cpu_threads, self.model_version.upper(), rec_model_path.name, det_name)
             return True
         except Exception as e:
             logger.error("[ONNX AI OCR] Initialization failed: %s", e)
             self.session = None
+            self.det_session = None
             self._initialized = False
             return False
 
@@ -158,7 +218,7 @@ class OnnxOcrEngine:
 
             # If glowing green digits (Fluke 1502A / LED) present, crop tightly around active digits
             r, g, b = arr[:,:,0].astype(int), arr[:,:,1].astype(int), arr[:,:,2].astype(int)
-            mask = ((g - np.maximum(r, b)) > 18) & (g > 60)
+            mask = ((g - np.maximum(r, b)) > 18) & (g > 115)
             if np.count_nonzero(mask) >= 25:
                 y_idx, x_idx = np.where(mask)
                 pad_x, pad_y = 8, 6
@@ -178,7 +238,14 @@ class OnnxOcrEngine:
             else:
                 resized = np.array(Image.fromarray(arr).resize((target_w, target_h), Image.Resampling.BILINEAR))
 
-            norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
+            if str(getattr(self, "model_version", "v4")).lower().startswith("v6"):
+                # PP-OCRv6 ImageNet normalization
+                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                norm = (resized.astype(np.float32) / 255.0 - mean) / std
+            else:
+                # PP-OCRv4 normalization
+                norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
             tensor = np.expand_dims(np.transpose(norm, (2, 0, 1)), axis=0)
 
             input_name = self.session.get_inputs()[0].name
@@ -198,11 +265,67 @@ class OnnxOcrEngine:
                 prev = idx
 
             raw_str = "".join(chars).strip()
+            # Strip non-ASCII noise glyphs (e.g. Chinese character dictionary bleed)
+            raw_str = re.sub(r'[^\x20-\x7E]+', '', raw_str).strip()
             conf = float(np.mean(probs)) if probs else 0.0
             return raw_str, conf
         except Exception as e:
             logger.error("[ONNX AI OCR] Recognition inference error: %s", e)
             return "", 0.0
+
+    def detect_text_blobs(self, img_arr: np.ndarray, min_prob: float = 0.35) -> List[Tuple[float, float, float, float]]:
+        """
+        Uses DBNet text detector to find normalized bounding boxes (x, y, w, h) of text in an image.
+        """
+        if not self._initialized:
+            self.initialize()
+        if not self.det_session:
+            return []
+
+        try:
+            h, w = img_arr.shape[:2]
+            det_w, det_h = 960, 544
+            pil_img = Image.fromarray(img_arr).resize((det_w, det_h), Image.Resampling.BILINEAR)
+            inp = (np.array(pil_img).astype(np.float32) / 255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+            inp = np.transpose(inp, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
+
+            input_name = self.det_session.get_inputs()[0].name
+            pred = self.det_session.run(None, {input_name: inp})[0][0, 0]
+            mask = (pred > min_prob)
+
+            visited = np.zeros_like(mask, dtype=bool)
+            ys, xs = np.where(mask)
+            coords = set(zip(ys, xs))
+            blobs = []
+
+            while coords:
+                y, x = coords.pop()
+                if visited[y, x]:
+                    continue
+                queue = [(y, x)]
+                visited[y, x] = True
+                min_x, max_x = x, x
+                min_y, max_y = y, y
+                count = 0
+                while queue:
+                    cy, cx = queue.pop()
+                    count += 1
+                    if cx < min_x: min_x = cx
+                    if cx > max_x: max_x = cx
+                    if cy < min_y: min_y = cy
+                    if cy > max_y: max_y = cy
+                    for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        ny, nx = cy + dy, cx + dx
+                        if (ny, nx) in coords:
+                            coords.remove((ny, nx))
+                            visited[ny, nx] = True
+                            queue.append((ny, nx))
+                if count > 100:
+                    blobs.append((float(min_x / det_w), float(min_y / det_h), float((max_x - min_x) / det_w), float((max_y - min_y) / det_h)))
+            return blobs
+        except Exception as ex:
+            logger.warning("[ONNX AI OCR] Detection inference error: %s", ex)
+            return []
 
 
 # Global singleton instance
@@ -372,99 +495,159 @@ def detect_thermometers_in_image(img_input: Any) -> Dict[str, Any]:
 
     width, height = pil_img.size
 
-    if not HAS_CV2 or np is None or cv2 is None:
+    if np is None:
         return {
             "is_digital": True,
             "is_unsupported": False,
             "unsupported_type": None,
-            "message": "OpenCV / NumPy not loaded, using fallback layout.",
+            "message": "NumPy not loaded, using fallback layout.",
             "boxes": _fallback_default_boxes()["boxes"],
             "detected_count": 5
         }
 
-    cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-    img_area = width * height
-    candidates = []
+    is_composite = (width >= 1950 and height >= 2180)
+    arr_full = np.array(pil_img)
+    if is_composite:
+        border = 50
+        slot_w = width - border * 2
+        slot_h = (height - border * 2) // 2
+        chamber_arr = arr_full[border:border + slot_h, border:border + slot_w]
+        device_arr = arr_full[border + slot_h:border + slot_h * 2, border:border + slot_w]
+    else:
+        slot_w = width
+        slot_h = height
+        chamber_arr = arr_full
+        device_arr = None
 
-    # 1. Check for Luminous Green VFD Readout (Fluke 1502A Standard Reference)
-    hsv = cv2.cvtColor(cv_img, cv2.COLOR_BGR2HSV)
-    green_mask = cv2.inRange(hsv, np.array([35, 60, 60]), np.array([85, 255, 255]))
-    green_cnts, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in green_cnts:
-        x, y, w, h = cv2.boundingRect(cnt)
-        cnt_area = w * h
-        if cnt_area >= (img_area * 0.003):
-            pad_x = int(w * 0.12)
-            pad_y = int(h * 0.20)
-            x0 = max(0, x - pad_x)
-            y0 = max(0, y - pad_y)
-            w0 = min(width - x0, w + pad_x * 2)
-            h0 = min(height - y0, h + pad_y * 2)
-            candidates.append((x0, y0, w0, h0, w0 * h0, "vfd"))
+    result_boxes = []
 
-    # 2. Check for Rectangular Digital Readable LCD Displays (e.g. HTC-2, HTC-1 sensors)
-    # Target the inner readable LCD screen window rather than the whole outer housing.
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 35, 110)
+    # 1. Detect Standard Instrument (Fluke 1502A) in Device Slot
+    if device_arr is not None:
+        r = device_arr[:, :, 0].astype(int)
+        g = device_arr[:, :, 1].astype(int)
+        b = device_arr[:, :, 2].astype(int)
+        green_lit = (g > 95) & (g > r + 20) & (g > b + 20)
+        ys, xs = np.where(green_lit)
+        # Isolate main VFD digit panel (filter out incidental top status LEDs at y < 0.25)
+        valid_vfd = ys >= int(0.22 * slot_h)
+        if np.count_nonzero(valid_vfd) > 60:
+            ys_vfd, xs_vfd = ys[valid_vfd], xs[valid_vfd]
+            min_x, max_x = int(np.min(xs_vfd)), int(np.max(xs_vfd))
+            min_y, max_y = int(np.min(ys_vfd)), int(np.max(ys_vfd))
+            pad_w = int((max_x - min_x) * 0.05)
+            pad_h = int((max_y - min_y) * 0.12)
+            bx = max(0, min_x - pad_w)
+            by = max(0, min_y - pad_h)
+            bw = min(slot_w - bx, (max_x - min_x) + pad_w * 2)
+            bh = min(slot_h - by, (max_y - min_y) + pad_h * 2)
+            nx = round(bx / slot_w, 4)
+            ny = round(by / slot_h, 4)
+            nw = round(bw / slot_w, 4)
+            nh = round(bh / slot_h, 4)
+            result_boxes.append({
+                "id": "box_standard",
+                "label": "Standard (Fluke 1502A)",
+                "camera_type": "device",
+                "target": "device",
+                "mode": "quad",
+                "x": nx, "y": ny, "w": nw, "h": nh, "width": nw, "height": nh,
+                "points": [
+                    [nx, ny],
+                    [round(nx + nw, 4), ny],
+                    [round(nx + nw, 4), round(ny + nh, 4)],
+                    [nx, round(ny + nh, 4)]
+                ],
+                "status": "candidate"
+            })
 
-    # Bridge segment lines to form closed screen bounding boxes
-    k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
-    k_v = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
-    edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k_h)
-    edges_closed = cv2.morphologyEx(edges_closed, cv2.MORPH_CLOSE, k_v)
+    # 2. Detect Sensors in Chamber Slot via PP-OCRv4 AI text detection
+    det_blobs = onnx_ocr_engine.detect_text_blobs(chamber_arr) if onnx_ocr_engine else []
+    if det_blobs:
+        clusters = []
+        for blb in sorted(det_blobs, key=lambda x: x[0]):
+            bx, by, bw, bh = blb
+            matched = False
+            for cl in clusters:
+                if abs(cl["cx"] - (bx + bw / 2.0)) < 0.16:
+                    cl["boxes"].append(blb)
+                    cl["min_x"] = min(cl["min_x"], bx)
+                    cl["max_x"] = max(cl["max_x"], bx + bw)
+                    cl["min_y"] = min(cl["min_y"], by)
+                    cl["max_y"] = max(cl["max_y"], by + bh)
+                    cl["cx"] = (cl["min_x"] + cl["max_x"]) / 2.0
+                    matched = True
+                    break
+            if not matched:
+                clusters.append({
+                    "cx": bx + bw / 2.0,
+                    "min_x": bx, "max_x": bx + bw,
+                    "min_y": by, "max_y": by + bh,
+                    "boxes": [blb]
+                })
 
-    contours, hierarchy = cv2.findContours(edges_closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        disp_idx = 1
+        for cl in sorted(clusters, key=lambda c: c["cx"]):
+            cl_w = cl["max_x"] - cl["min_x"]
+            cl_h = cl["max_y"] - cl["min_y"]
+            
+            # Frame the temperature readout line on the digital display
+            disp_w = 0.150
+            disp_h = 0.082
+            disp_x = max(0.0, cl["cx"] - 0.075)
+            disp_y = max(0.0, cl["min_y"] + 0.026 if cl_h > 0.15 else 0.520)
+            if disp_y + disp_h > 0.98:
+                disp_y = max(0.0, 0.98 - disp_h)
+            
+            nx = round(disp_x, 4)
+            ny = round(disp_y, 4)
+            nw = round(disp_w, 4)
+            nh = round(disp_h, 4)
+            result_boxes.append({
+                "id": f"box_disp_{disp_idx:02d}",
+                "label": f"Display {disp_idx:02d} (LCD)",
+                "camera_type": "chamber",
+                "target": "chamber",
+                "mode": "quad",
+                "x": nx, "y": ny, "w": nw, "h": nh, "width": nw, "height": nh,
+                "points": [
+                    [nx, ny],
+                    [round(nx + nw, 4), ny],
+                    [round(nx + nw, 4), round(ny + nh, 4)],
+                    [nx, round(ny + nh, 4)]
+                ],
+                "status": "candidate"
+            })
+            disp_idx += 1
 
-    min_screen_area = img_area * 0.004   # At least 0.4% of camera frame
-    max_screen_area = img_area * 0.25    # At most 25% of camera frame (screen window, not whole chamber)
-
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        area = w * h
-        if area < min_screen_area or area > max_screen_area:
-            continue
-        aspect = float(w) / max(1, h)
-        # Digital LCD displays typically have aspect ratio 0.85 to 3.2
-        if 0.85 <= aspect <= 3.4:
-            # Check if this crop has digital display properties (7-segment elements / high contrast)
-            crop_candidate = cv_img[y:y+h, x:x+w]
-            is_dig, conf, _ = verify_is_digital_display(crop_candidate)
-            if is_dig:
-                candidates.append((x, y, w, h, area, "lcd"))
-
-    # If edge detection was too sparse, use adaptive thresholding for high-contrast LCD screens
-    if len(candidates) < 2:
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 5
-        )
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        thresh_closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        th_cnts, _ = cv2.findContours(thresh_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in th_cnts:
+    # Fallback to OpenCV contour detection if AI detection found 0 chamber boxes
+    if not any(b["camera_type"] == "chamber" for b in result_boxes) and HAS_CV2 and cv2 is not None:
+        cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+        img_area = width * height
+        candidates = []
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 35, 110)
+        k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
+        k_v = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
+        edges_closed = cv2.morphologyEx(cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k_h), cv2.MORPH_CLOSE, k_v)
+        contours, _ = cv2.findContours(edges_closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        min_screen_area = img_area * 0.004
+        max_screen_area = img_area * 0.25
+        for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
             area = w * h
-            if min_screen_area <= area <= max_screen_area:
-                aspect = float(w) / max(1, h)
-                if 0.90 <= aspect <= 3.2:
-                    crop_candidate = cv_img[y:y+h, x:x+w]
-                    is_dig, conf, _ = verify_is_digital_display(crop_candidate)
-                    if is_dig:
-                        candidates.append((x, y, w, h, area, "lcd"))
+            if min_screen_area <= area <= max_screen_area and 0.85 <= float(w)/max(1, h) <= 3.4:
+                candidates.append((x, y, w, h, area, "lcd"))
+        cv_boxes = _nms_filter(candidates, width, height)
+        for b in cv_boxes:
+            result_boxes.append(b)
 
-    # 3. Apply Non-Maximum Suppression (NMS) to collapse duplicates and prioritize readable displays
-    verified_boxes = _nms_filter(candidates, width, height)
-
-    if not verified_boxes:
+    if not result_boxes:
         return {
             "is_digital": False,
             "is_unsupported": False,
             "unsupported_type": None,
-            "message": (
-                "Tidak terdeteksi display digital yang jelas secara otomatis. "
-                "Silakan tambahkan ROI Bounding Box manual di atas layar display termometer, "
-                "atau sesuaikan pencahayaan dan fokus kamera."
-            ),
+            "message": "Tidak terdeteksi display digital yang jelas secara otomatis. Silakan posisikan ROI manual.",
             "boxes": [],
             "detected_count": 0
         }
@@ -473,9 +656,9 @@ def detect_thermometers_in_image(img_input: Any) -> Dict[str, Any]:
         "is_digital": True,
         "is_unsupported": False,
         "unsupported_type": None,
-        "message": f"Terdeteksi {len(verified_boxes)} display termometer digital aktif di dalam chamber.",
-        "boxes": verified_boxes,
-        "detected_count": len(verified_boxes)
+        "message": f"Terdeteksi {len(result_boxes)} display instrumen aktif (Standar & Sensor).",
+        "boxes": result_boxes,
+        "detected_count": len(result_boxes)
     }
 
 
@@ -706,6 +889,15 @@ def extract_roi_region(pil_img: Image.Image, box: Dict[str, Any], is_single_feed
             poly.append([px, py])
 
         tl, tr, br, bl = poly[0], poly[1], poly[2], poly[3]
+        # Outward safety padding (6%) so slightly tight manual touch pins do not cut off digit bottoms or decimal points
+        cx = (tl[0] + tr[0] + br[0] + bl[0]) / 4.0
+        cy = (tl[1] + tr[1] + br[1] + bl[1]) / 4.0
+        pad_factor = 1.06
+        tl = [cx + (tl[0] - cx) * pad_factor, cy + (tl[1] - cy) * pad_factor]
+        tr = [cx + (tr[0] - cx) * pad_factor, cy + (tr[1] - cy) * pad_factor]
+        br = [cx + (br[0] - cx) * pad_factor, cy + (br[1] - cy) * pad_factor]
+        bl = [cx + (bl[0] - cx) * pad_factor, cy + (bl[1] - cy) * pad_factor]
+
         target_w = max(40, int(max(math.hypot(tr[0] - tl[0], tr[1] - tl[1]), math.hypot(br[0] - bl[0], br[1] - bl[1]))))
         target_h = max(25, int(max(math.hypot(bl[0] - tl[0], bl[1] - tl[1]), math.hypot(br[0] - tr[0], br[1] - tr[1]))))
 
@@ -816,7 +1008,7 @@ def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image, box: Option
     if is_vfd:
         # Isolate luminous green segments
         _, thresh = cv2.threshold(g_diff, 18, 255, cv2.THRESH_BINARY)
-        _, g_min = cv2.threshold(g, 65, 255, cv2.THRESH_BINARY)
+        _, g_min = cv2.threshold(g, 125, 255, cv2.THRESH_BINARY)
         thresh = cv2.bitwise_and(thresh, g_min)
 
         # Auto-crop to active glowing digit bounding box to eliminate buttons, logos, and bezel
@@ -883,6 +1075,10 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
 
     # 1. Normalize spaces around dots: '20 . 953' -> '20.953'
     t = re.sub(r'(\d+)\s*\.\s*(\d+)', r'\1.\2', text)
+    # 1b. Fix space-split digits before/after dot: '2 5.34' -> '25.34', '2 5.3' -> '25.3', '25.3 4' -> '25.34'
+    t = re.sub(r'(\d+\.\d+)\s+(\d+)', r'\1\2', t)
+    t = re.sub(r'\b(\d)\s+(\d\.\d+)\b', r'\1\2', t)
+    t = re.sub(r'\b(\d)\s+(\d)\s+(\d)\b', r'\1\2.\3', t)
     # 2. Spaces between digits when dot was omitted: '20 953' -> '20.953'
     t = re.sub(r'(\b\d{1,2})\s+(\d{2,4}\b)', r'\1.\2', t)
     # 3. Replace comma with dot
@@ -908,10 +1104,10 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
             except ValueError:
                 pass
 
-        # Match 5 digits without dot: e.g. '2095580' or '20955 C' where 20955 is the reading
-        m5 = re.search(r'\b(\d{5})(?:80|86|88|[cC]|\b)', t)
+        # Match 5 digits without dot: e.g. '2095580', '218341', or '20955 C' where 20955 is the reading
+        m5 = re.search(r'\b(\d{5})\d?(?:80|86|88|[cC]|\b)', t)
         if not m5:
-            m5 = re.search(r'\b(\d{5})\b', t)
+            m5 = re.search(r'\b(\d{5})\d?', t)
         if m5:
             try:
                 val = float(m5.group(1)) / 1000.0
@@ -930,7 +1126,41 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
             except ValueError:
                 pass
 
-    # B. Floating point numbers with decimal point (e.g. 20.953, 20.5, -5.2, 100.0)
+    # B. For chamber thermometers (HTC-2, HTC-1, LCD displays):
+    # HTC sensors physically have 1-decimal resolution (e.g. 24.0°C).
+    # The degree symbol (°C) touching the last digit is frequently read as an extra digit (e.g. '24.02', '24.07', '24.04', '25.77').
+    if not is_standard:
+        m_deg = re.search(r'[-+]?\b(\d{1,2}\.\d)\d\b', t)
+        if m_deg:
+            try:
+                val = float(m_deg.group(1))
+                if -50.0 <= val <= 250.0:
+                    return round(val, 1)
+            except ValueError:
+                pass
+
+    # Look for standard 1-decimal temperature: e.g. 24.0, 25.1
+    m1 = re.search(r'[-+]?\b(\d{1,2}\.\d)\b', t)
+    if m1:
+        try:
+            val = float(m1.group(1))
+            if -50.0 <= val <= 250.0:
+                return round(val, 1)
+        except ValueError:
+            pass
+
+    # For chamber thermometers: 3 digits without visible dot (e.g. '250' -> 25.0, '254' -> 25.4, '240' -> 24.0)
+    if not is_standard:
+        m3_int = re.search(r'\b(\d{3})\b', t)
+        if m3_int:
+            try:
+                val = float(m3_int.group(1)) / 10.0
+                if 0.0 <= val <= 99.9:
+                    return round(val, 1)
+            except ValueError:
+                pass
+
+    # C. Floating point numbers with decimal point (e.g. 20.953, 20.5, -5.2, 100.0)
     matches = re.findall(r"[-+]?\d{1,3}\.\d{1,4}", t)
     for m in matches:
         try:
@@ -940,11 +1170,15 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
         except ValueError:
             continue
 
-    # C. Standard integer fallback (e.g. '20')
+    # D. Standard integer fallback (e.g. '20')
     int_matches = re.findall(r"[-+]?\d{1,3}", t)
-    for m in int_matches:
+    sorted_ints = sorted(int_matches, key=lambda x: len(x.lstrip('-+')), reverse=True)
+    for m in sorted_ints:
         try:
             val = float(m)
+            # Avoid picking spurious single digit like '2' for chamber thermometer displays
+            if not is_standard and len(m.lstrip('-+')) == 1 and val < 10.0:
+                continue
             if -50.0 <= val <= 250.0:
                 return val
         except ValueError:
@@ -974,19 +1208,37 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
     onnx_conf = 0.0
     if onnx_ocr_engine:
         input_target = cv_crop if cv_crop is not None else crop
+
+        # Standard / VFD green segment isolation (Fluke 1502A)
+        cam_type = (box.get("camera_type") or box.get("target") or "").lower()
+        lbl = str(box.get("label", "")).lower()
+        is_standard = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
+
+        crop_arr = np.array(crop) if isinstance(crop, Image.Image) else cv_crop
+        if crop_arr is not None and len(crop_arr.shape) == 3:
+            r_c = crop_arr[:, :, 0].astype(int)
+            g_c = crop_arr[:, :, 1].astype(int)
+            b_c = crop_arr[:, :, 2].astype(int)
+            green_lit = (g_c > 128) & (g_c > r_c + 18) & (g_c > b_c + 18)
+            if is_standard or np.count_nonzero(green_lit) > 60:
+                clean = np.where(green_lit, 0, 255).astype(np.uint8)
+                input_target = Image.fromarray(np.stack([clean] * 3, axis=-1))
+
         onnx_text, onnx_conf = onnx_ocr_engine.recognize(input_target, box=box)
         if onnx_text:
             onnx_val = extract_thermometer_value(onnx_text, box=box)
 
     # If ONNX AI produced a confident valid numeric reading, return immediately!
     if onnx_val is not None and onnx_conf >= 0.40:
-        logger.info("[OCR Engine] AI (ONNX PP-OCRv4) recognized reading: %s -> %.3f (conf: %.2f)", onnx_text, onnx_val, onnx_conf)
+        ver_str = getattr(onnx_ocr_engine, "model_version", "v4").upper()
+        logger.info("[OCR Engine] AI (ONNX PP-OCR%s) recognized reading: %s -> %.3f (conf: %.2f)", ver_str, onnx_text, onnx_val, onnx_conf)
         return {
             "text": onnx_text,
             "value": onnx_val,
             "status": "success",
             "confidence": round(onnx_conf, 3),
             "engine": "onnx_ai",
+            "model_version": getattr(onnx_ocr_engine, "model_version", "v6_small"),
             "display_type": "onnx_ai",
             "crop_bytes": crop_bytes
         }
