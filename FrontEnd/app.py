@@ -34,6 +34,7 @@ DEFAULT_ALLOWED_NETWORKS = [
     "192.168.88.0/23",  # covers 192.168.88.0 - 192.168.89.255
     "88.88.88.0/24",
     "10.10.1.0/24",
+    "10.101.27.0/24",   # Docker internal bridge network (FrontEnd dockge)
     "10.101.29.0/24",   # Docker internal bridge network
     "192.168.70.0/24",
     "172.19.176.0/24",
@@ -217,6 +218,18 @@ for d in (TEMPLATES_DIR, STATIC_DIR / "css", STATIC_DIR / "js", DATA_DIR, IMAGES
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("frontend_app")
 
+# Silence noisy external libraries (httpx, httpcore)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Suppress spammy polling endpoints in uvicorn access logs
+class EndpointLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(ep in msg for ep in ("/api/status", "/api/heartbeat", "/api/ping"))
+
+logging.getLogger("uvicorn.access").addFilter(EndpointLogFilter())
+
 def sync_system_tessdata():
     """Ensure traineddata models exist in TESSDATA_DIR by copying container system models if empty."""
     try:
@@ -295,16 +308,29 @@ backend_client: Optional[httpx.AsyncClient] = None
 
 # Inactivity state tracking (Stage 1: LED auto-off, Stage 2: Full system sleep)
 last_activity_time = time.time()
+last_client_seen_time = time.time()
 led_auto_off_done = False
 inactivity_shut_off = False
 watchdog_task: Optional[asyncio.Task] = None
+CLIENT_PRESENCE_TIMEOUT = 30.0  # seconds without client communication before considering 0 clients connected
 
 def record_activity():
-    """Register user interaction timestamp."""
-    global last_activity_time, led_auto_off_done, inactivity_shut_off
-    last_activity_time = time.time()
+    """Register genuine user interaction timestamp (resets idle countdown and client presence)."""
+    global last_activity_time, last_client_seen_time, led_auto_off_done, inactivity_shut_off
+    now = time.time()
+    last_activity_time = now
+    last_client_seen_time = now
     led_auto_off_done = False
     inactivity_shut_off = False
+
+def touch_client_presence():
+    """Register that a web browser client is actively connected/viewing without resetting user idle timer."""
+    global last_client_seen_time
+    last_client_seen_time = time.time()
+
+def has_active_web_clients() -> bool:
+    """Return True if any browser web client has communicated within CLIENT_PRESENCE_TIMEOUT."""
+    return (time.time() - last_client_seen_time) <= CLIENT_PRESENCE_TIMEOUT
 
 
 async def inactivity_watchdog_loop():
@@ -313,8 +339,10 @@ async def inactivity_watchdog_loop():
     1. At idle >= LED_AUTO_OFF (2 mins / 120s): Automatically turn off WS2812B LEDs only.
        The camera and live video stream stay active!
     2. At idle >= INACTIVITY_TIME (10 mins / 600s): Automatically power off camera and all hardware (complete sleep).
+    3. If NO active web client is connected for > CLIENT_PRESENCE_TIMEOUT (30s):
+       Cease sending heartbeats to Raspberry Pi. If hardware was left on, safely power it down.
     """
-    global last_activity_time, led_auto_off_done, inactivity_shut_off
+    global last_activity_time, last_client_seen_time, led_auto_off_done, inactivity_shut_off
     logger.info(
         "Inactivity watchdog active. LED auto-off: %d seconds (%d mins) | Full sleep: %d seconds (%d mins).",
         LED_AUTO_OFF, LED_AUTO_OFF // 60,
@@ -323,9 +351,37 @@ async def inactivity_watchdog_loop():
     while True:
         try:
             await asyncio.sleep(5)
-            idle = time.time() - last_activity_time
+            now = time.time()
+            idle = now - last_activity_time
+            client_idle = now - last_client_seen_time
+            active_clients = has_active_web_clients()
 
-            # Periodically ping backend watchdog if system is active
+            # Scenario A: When no web clients are connected, pause sending heartbeats to Raspberry Pi
+            if not active_clients:
+                continue
+
+            # Scenario B: Stage 2 - Turn off camera and entire system after 10 minutes of user idle
+            if idle >= INACTIVITY_TIME:
+                if not inactivity_shut_off:
+                    logger.warning(
+                        "[FULL INACTIVITY TIMEOUT] No user interaction for %d seconds. Powering down camera and all hardware on %s...",
+                        int(idle), BECKEND_RPI_IP
+                    )
+                    inactivity_shut_off = True
+                    if backend_client:
+                        try:
+                            await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=4.0)
+                        except Exception as e:
+                            logger.error("Failed to disable camera on full inactivity: %s", e)
+                        try:
+                            await backend_client.post("/api/lights", json={"power": False}, timeout=4.0)
+                        except Exception as e:
+                            logger.error("Failed to turn off lights on full inactivity: %s", e)
+                    logger.info("[FULL INACTIVITY TIMEOUT] Hardware successfully powered down.")
+                # After 10m inactivity timeout has shut off hardware, STOP pinging backend watchdog!
+                continue
+
+            # Only ping backend watchdog when an active web client is present AND system is not in sleep
             if backend_client and not inactivity_shut_off:
                 try:
                     await backend_client.post("/api/heartbeat", timeout=2.0)
@@ -345,23 +401,6 @@ async def inactivity_watchdog_loop():
                     except Exception as e:
                         logger.error("Failed to turn off lights on LED auto-off: %s", e)
 
-            # Stage 2: Turn off camera and entire system after 10 minutes of idle
-            if idle >= INACTIVITY_TIME and not inactivity_shut_off:
-                logger.warning(
-                    "[FULL INACTIVITY TIMEOUT] No user interaction for %d seconds. Powering down camera and all hardware on %s...",
-                    int(idle), BECKEND_RPI_IP
-                )
-                inactivity_shut_off = True
-                if backend_client:
-                    try:
-                        await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=4.0)
-                    except Exception as e:
-                        logger.error("Failed to disable camera on full inactivity: %s", e)
-                    try:
-                        await backend_client.post("/api/lights", json={"power": False}, timeout=4.0)
-                    except Exception as e:
-                        logger.error("Failed to turn off lights on full inactivity: %s", e)
-                logger.info("[FULL INACTIVITY TIMEOUT] Hardware successfully powered down.")
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -392,9 +431,10 @@ ffmpeg:
 
 streams:
   chamber:
-    - "{rpi_stream}"
     - "ffmpeg:{rpi_stream}#video=h264"
-    - "ffmpeg:chamber#video=h264"
+    - "{rpi_stream}"
+  chamber_mjpeg:
+    - "{rpi_stream}"
 """
         with open(yaml_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -416,13 +456,13 @@ async def startup_event():
     record_activity()
     watchdog_task = asyncio.create_task(inactivity_watchdog_loop())
 
-    # Ensure hardware starts completely OFF on boot until user manually turns on
+    # Ensure camera is enabled and synchronized on boot, and lights start OFF
     try:
         await backend_client.post("/api/lights", json={"power": False}, timeout=3.0)
-        await backend_client.post("/api/camera/toggle", json={"enabled": False}, timeout=3.0)
         res_norm = parse_resolution_setting(DEFAULT_RESOLUTION)
         rw, rh = map(int, res_norm.split("x"))
         await backend_client.post("/api/camera/select", json={"width": rw, "height": rh, "fps": 30}, timeout=3.0)
+        await backend_client.post("/api/camera/toggle", json={"enabled": True}, timeout=3.0)
     except Exception:
         pass
 
@@ -462,7 +502,7 @@ def require_auth(request: Request):
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/login"}
         )
-    record_activity()
+    touch_client_presence()
     return user
 
 
@@ -926,6 +966,7 @@ async def proxy_cameras(user: str = Depends(require_auth)):
 
 @app.post("/api/camera/select")
 async def proxy_camera_select(request: Request, user: str = Depends(require_auth)):
+    record_activity()
     payload = await request.json()
     _status_cache["data"] = None
     try:
@@ -937,6 +978,7 @@ async def proxy_camera_select(request: Request, user: str = Depends(require_auth
 
 @app.post("/api/camera/toggle")
 async def proxy_camera_toggle(request: Request, user: str = Depends(require_auth)):
+    record_activity()
     payload = await request.json()
     _status_cache["data"] = None
     try:
@@ -948,6 +990,7 @@ async def proxy_camera_toggle(request: Request, user: str = Depends(require_auth
 
 @app.post("/api/camera/control")
 async def proxy_camera_control(request: Request, user: str = Depends(require_auth)):
+    record_activity()
     payload = await request.json()
     _status_cache["data"] = None
     try:
@@ -959,6 +1002,7 @@ async def proxy_camera_control(request: Request, user: str = Depends(require_aut
 
 @app.post("/api/camera/reset_defaults")
 async def proxy_camera_reset_defaults(request: Request, user: str = Depends(require_auth)):
+    record_activity()
     payload = await request.json()
     _status_cache["data"] = None
     try:
@@ -1012,7 +1056,27 @@ async def proxy_mjpeg_stream(request: Request):
     async def stream_generator():
         last_activity_touch = 0.0
 
-        # Attempt 1: Multiplexed MJPEG stream from go2rtc (single connection to Pi for ALL clients)
+        # Attempt 1: Direct Raspberry Pi MJPEG (Lowest latency <5ms, native camera frames, 100% compatible)
+        rpi_mjpeg = f"http://{BECKEND_RPI_IP}:{BECKEND_RPI_PORT}/api/camera/stream"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.5, read=None, write=None, pool=None)) as client:
+                async with client.stream("GET", rpi_mjpeg) as resp:
+                    if resp.status_code == 200:
+                        async for chunk in resp.aiter_raw():
+                            if await request.is_disconnected():
+                                break
+                            now = time.time()
+                            if now - last_activity_touch > 5.0:
+                                last_activity_touch = now
+                                touch_client_presence()
+                            yield chunk
+                        return
+                    else:
+                        logger.warning("Direct Pi MJPEG stream returned status %d, falling back to go2rtc", resp.status_code)
+        except Exception as e:
+            logger.debug("Direct Pi MJPEG stream notice: %s", e)
+
+        # Attempt 2: go2rtc multiplexed MJPEG fallback
         go2rtc_mjpeg = f"http://{GO2RTC_HOST}/api/stream.mjpeg?src=chamber"
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(connect=2.5, read=None, write=None, pool=None)) as client:
@@ -1024,25 +1088,9 @@ async def proxy_mjpeg_stream(request: Request):
                             now = time.time()
                             if now - last_activity_touch > 5.0:
                                 last_activity_touch = now
-                                record_activity()
+                                touch_client_presence()
                             yield chunk
                         return
-        except Exception:
-            pass
-
-        # Attempt 2: Direct Raspberry Pi fallback
-        rpi_mjpeg = f"http://{BECKEND_RPI_IP}:{BECKEND_RPI_PORT}/api/camera/stream"
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=4.0, read=None, write=None, pool=None)) as client:
-                async with client.stream("GET", rpi_mjpeg) as resp:
-                    async for chunk in resp.aiter_raw():
-                        if await request.is_disconnected():
-                            break
-                        now = time.time()
-                        if now - last_activity_touch > 5.0:
-                            last_activity_touch = now
-                            record_activity()
-                        yield chunk
         except Exception as e:
             logger.warning("Stream proxy connection issue: %s", e)
 

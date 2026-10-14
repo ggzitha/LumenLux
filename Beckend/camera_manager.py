@@ -49,7 +49,7 @@ class CameraManager:
         self.lock = threading.Lock()
         self.ctrl_lock = threading.Lock()
         self.active_camera_id = None
-        self.camera_enabled = False
+        self.camera_enabled = True
         
         # Stream settings
         self.target_fps = 30
@@ -363,6 +363,8 @@ class CameraManager:
         with self.lock:
             if cam_id:
                 self.active_camera_id = cam_id
+                if not cam_id.startswith("virtual"):
+                    self.camera_enabled = True
             if width and height:
                 self.resolution = (int(width), int(height))
             if fps:
@@ -540,6 +542,21 @@ class CameraManager:
         interval = 1.0 / max(1, self.target_fps)
         try:
             while self.running:
+                if not self.camera_enabled:
+                    time.sleep(0.5)
+                    frame = None
+                    with self.lock:
+                        frame = self.last_frame
+                    if frame and (time.time() - last_yielded >= 1.0):
+                        last_yielded = time.time()
+                        yield (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                            + frame + b"\r\n"
+                        )
+                    continue
+
                 now = time.time()
                 if now - last_yielded >= interval:
                     frame = None

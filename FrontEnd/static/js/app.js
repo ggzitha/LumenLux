@@ -39,7 +39,7 @@ const state = {
     },
     // Camera state (Initialized with .env defaults)
     camera: {
-        enabled: false,
+        enabled: true,
         active_id: null,
         resolution: envDefaults.default_resolution ?? "1920x1080",
         target_fps: 30,
@@ -97,10 +97,10 @@ function loadSavedConfig() {
                 Object.assign(state.lights, parsed.lights);
             }
             if (parsed.camera) {
-                // Strip saved enabled: always boot with camera disabled until user turns on manually
                 delete parsed.camera.enabled;
                 Object.assign(state.camera, parsed.camera);
             }
+            state.camera.enabled = true;
             if (parsed.deviceCamera) {
                 // Strip saved active state: camera only starts when user checks checkbox
                 delete parsed.deviceCamera.enabled;
@@ -901,9 +901,34 @@ let lastStreamFrameTime = performance.now();
 let streamReconnectTimer = null;
 let chamberPeerConnection = null;
 let chamberMseSocket = null;
-let chamberMediaSource = null;
-let chamberStreamMode = localStorage.getItem("lumen_stream_mode") || "webrtc";
+const isFirefox = /Firefox|FxiOS|Focus/i.test(navigator.userAgent);
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+
+// In Firefox (all platforms) and on all mobile / touch devices, WebRTC and MSE have severe
+// browser-level codec negotiation failures with go2rtc (500 EOF and black video surface).
+// Therefore, Firefox and mobile clients MUST default directly to native MJPEG streaming.
+let chamberStreamMode = localStorage.getItem("lumen_stream_mode");
+if (isFirefox || isMobileDevice) {
+    chamberStreamMode = "mjpeg";
+    try { localStorage.setItem("lumen_stream_mode", "mjpeg"); } catch (_) { }
+} else if (!chamberStreamMode) {
+    chamberStreamMode = "webrtc";
+}
+
 let isWebRtcConnecting = false;
+let streamStartupFallbackTimer = null;
+
+function armStreamStartupFallback() {
+    if (streamStartupFallbackTimer) clearTimeout(streamStartupFallbackTimer);
+    streamStartupFallbackTimer = setTimeout(() => {
+        const video = document.getElementById("chamberVideo");
+        const hasDecodedFrames = video && !video.classList.contains("hidden") && video.videoWidth > 0 && video.currentTime > 0 && !video.paused;
+        if (!hasDecodedFrames && state.camera.enabled && chamberStreamMode !== "mjpeg") {
+            console.warn("[Stream] Video stream did not render frames within 2.5s. Auto-recovering to native direct MJPEG...");
+            fallbackToMjpegStream();
+        }
+    }, 2500);
+}
 
 function stopChamberMseStream() {
     if (window._mseCatchupInterval) {
@@ -940,22 +965,35 @@ function stopChamberStreams() {
     stopChamberMseStream();
     const video = document.getElementById("chamberVideo");
     if (video) {
+        try { video.pause(); } catch (_) { }
         video.srcObject = null;
         video.removeAttribute("src");
+        try { video.load(); } catch (_) { }
     }
+    const img = document.getElementById("cameraStream");
+    if (img) {
+        img.removeAttribute("src");
+        img.src = "";
+    }
+    const fpsBadge = document.getElementById("liveFpsBadge");
+    if (fpsBadge) fpsBadge.textContent = "OFF";
 }
 
 async function startChamberStream() {
     const video = document.getElementById("chamberVideo");
     const img = document.getElementById("cameraStream");
+    const disabledOverlay = document.getElementById("chamberDisabledOverlay");
     if (!video || !img) return;
 
     if (!state.camera.enabled) {
         stopChamberStreams();
         video.classList.add("hidden");
         img.classList.add("hidden");
+        if (disabledOverlay) disabledOverlay.classList.remove("hidden");
         return;
     }
+
+    if (disabledOverlay) disabledOverlay.classList.add("hidden");
 
     if (chamberStreamMode === "mjpeg") {
         stopChamberStreams();
@@ -974,6 +1012,7 @@ async function startChamberStream() {
     if (isWebRtcConnecting) return;
     isWebRtcConnecting = true;
     stopChamberStreams();
+    armStreamStartupFallback();
 
     try {
         console.log("[Stream] Initiating go2rtc WebRTC connection...");
@@ -995,7 +1034,14 @@ async function startChamberStream() {
             }
             img.classList.add("hidden");
             video.classList.remove("hidden");
-            video.play().catch(e => console.warn("[WebRTC] Autoplay waiting for user gesture:", e));
+            video.play()
+                .then(() => {
+                    if (streamStartupFallbackTimer) {
+                        clearTimeout(streamStartupFallbackTimer);
+                        streamStartupFallbackTimer = null;
+                    }
+                })
+                .catch(e => console.warn("[WebRTC] Autoplay waiting for user gesture:", e));
         };
 
         pc.oniceconnectionstatechange = () => {
@@ -1061,18 +1107,19 @@ async function startChamberStream() {
 
         console.log("[WebRTC] WebRTC peer connected and streaming!");
     } catch (err) {
-        console.warn("[WebRTC] WebRTC handshake not available, transitioning to high-speed MSE H.264 stream:", err);
+        console.warn("[WebRTC] WebRTC handshake not available on this browser/network:", err);
+        if (isFirefox || isMobileDevice || !('MediaSource' in window)) {
+            console.log("[Stream] Firefox / Mobile detected, switching directly to native MJPEG stream...");
+            fallbackToMjpegStream();
+            return;
+        }
         if (chamberStreamMode === "webrtc") {
             chamberStreamMode = "mse";
-            localStorage.setItem("lumen_stream_mode", "mse");
+            try { localStorage.setItem("lumen_stream_mode", "mse"); } catch (_) { }
             const streamSelect = document.getElementById("streamModeSelect");
             if (streamSelect) streamSelect.value = "mse";
         }
-        if ('MediaSource' in window) {
-            startChamberMseStream();
-        } else {
-            fallbackToDirectMp4Stream();
-        }
+        startChamberMseStream();
     } finally {
         isWebRtcConnecting = false;
     }
@@ -1090,6 +1137,7 @@ function startChamberMseStream() {
     }
 
     stopChamberStreams();
+    armStreamStartupFallback();
 
     try {
         const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1119,7 +1167,15 @@ function startChamberMseStream() {
                     'avc1.42001f',
                     'avc1.64002A',
                     'avc1.640033'
-                ].filter(c => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)).join();
+                ].filter(c => {
+                    try { return MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`); } catch (_) { return false; }
+                }).join();
+                if (!supported || isFirefox || isMobileDevice) {
+                    console.warn("[MSE] MSE not supported or incompatible on this browser engine, falling back to direct MJPEG stream");
+                    fallbackToMjpegStream();
+                    try { ws.close(); } catch (_) { }
+                    return;
+                }
                 ws.send(JSON.stringify({ type: "mse", value: supported }));
             }
         };
@@ -1163,6 +1219,15 @@ function startChamberMseStream() {
                                 }
                             }, 1500);
 
+                            video.onloadeddata = () => {
+                                if (video.videoWidth > 0) {
+                                    if (streamStartupFallbackTimer) {
+                                        clearTimeout(streamStartupFallbackTimer);
+                                        streamStartupFallbackTimer = null;
+                                    }
+                                }
+                            };
+
                             video.play().catch(e => console.warn("[MSE] Autoplay notice:", e));
                         }
                     }
@@ -1171,6 +1236,7 @@ function startChamberMseStream() {
                 }
             } else if (event.data instanceof ArrayBuffer) {
                 lastStreamFrameTime = performance.now();
+                window._mseFailCount = 0;
                 if (sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
                     try {
                         sourceBuffer.appendBuffer(event.data);
@@ -1196,6 +1262,13 @@ function startChamberMseStream() {
 
         ws.onclose = () => {
             console.log("[MSE] WebSocket stream closed");
+            window._mseFailCount = (window._mseFailCount || 0) + 1;
+            if (window._mseFailCount >= 2) {
+                console.warn("[MSE] Persistent connection failure, falling back to direct MJPEG stream...");
+                chamberStreamMode = "mjpeg";
+                fallbackToMjpegStream();
+                return;
+            }
             if (state.camera.enabled && (chamberStreamMode === "mse" || chamberStreamMode === "webrtc")) {
                 if (!window._mseReconnectTimer) {
                     window._mseReconnectTimer = setTimeout(() => {
@@ -1203,7 +1276,7 @@ function startChamberMseStream() {
                         if (state.camera.enabled && !chamberMseSocket && !chamberPeerConnection) {
                             startChamberMseStream();
                         }
-                    }, 4000);
+                    }, 2500);
                 }
             }
         };
@@ -1233,11 +1306,36 @@ function fallbackToMjpegStream() {
     const img = document.getElementById("cameraStream");
     if (!video || !img) return;
 
-    stopChamberStreams();
-    video.classList.add("hidden");
+    chamberStreamMode = "mjpeg";
+    try { localStorage.setItem("lumen_stream_mode", "mjpeg"); } catch (_) { }
+    const streamModeSelect = document.getElementById("streamModeSelect");
+    if (streamModeSelect) streamModeSelect.value = "mjpeg";
+
+    if (streamStartupFallbackTimer) {
+        clearTimeout(streamStartupFallbackTimer);
+        streamStartupFallbackTimer = null;
+    }
+
+    stopChamberMseStream();
+    if (chamberPeerConnection) {
+        try { chamberPeerConnection.close(); } catch (_) { }
+        chamberPeerConnection = null;
+    }
+
+    if (video) {
+        try { video.pause(); } catch (_) { }
+        video.srcObject = null;
+        video.removeAttribute("src");
+        try { video.load(); } catch (_) { }
+        video.classList.add("hidden");
+    }
+
     img.classList.remove("hidden");
-    if (!img.src || !img.src.includes("/stream")) {
-        img.src = `/stream?t=${Date.now()}`;
+    img.src = `/stream?t=${Date.now()}`;
+    lastStreamFrameTime = performance.now();
+    const fpsBadge = document.getElementById("liveFpsBadge");
+    if (fpsBadge && state.camera.enabled) {
+        fpsBadge.textContent = "LIVE";
     }
 }
 
@@ -1248,8 +1346,7 @@ function reconnectCameraStream(immediate = false) {
             if (chamberStreamMode === "webrtc" || chamberStreamMode === "mse") {
                 startChamberStream();
             } else {
-                const img = document.getElementById("cameraStream");
-                if (img) img.src = `/stream?t=${Date.now()}`;
+                fallbackToMjpegStream();
             }
         }
     }, immediate ? 50 : 500);
@@ -1261,6 +1358,11 @@ function initFpsCounter() {
     const streamVideo = document.getElementById("chamberVideo");
 
     function onFrameReceived() {
+        if (!state.camera.enabled) {
+            if (fpsBadge) fpsBadge.textContent = "OFF";
+            fpsFrames = 0;
+            return;
+        }
         lastStreamFrameTime = performance.now();
         fpsFrames++;
         const now = performance.now();
@@ -1307,14 +1409,22 @@ function initFpsCounter() {
         });
     }
 
-    // Watchdog: If no frames received for 8 seconds while camera is enabled and not playing, auto-revive
+    // Watchdog: If no frames / active stream for 8 seconds while camera is enabled, auto-revive
     setInterval(() => {
-        const isVideoActive = streamVideo && !streamVideo.classList.contains("hidden") && (streamVideo.readyState >= 2 || (!streamVideo.paused && streamVideo.currentTime > 0));
-        if (isVideoActive) {
+        if (!state.camera.enabled) return;
+
+        const isVideoActive = streamVideo && !streamVideo.classList.contains("hidden") && (streamVideo.videoWidth > 0 && (streamVideo.readyState >= 2 || (!streamVideo.paused && streamVideo.currentTime > 0)));
+        const isImgActive = streamImg && !streamImg.classList.contains("hidden") && (streamImg.naturalWidth > 0 || (streamImg.src && streamImg.src.includes("/stream")));
+
+        if (isVideoActive || isImgActive) {
             lastStreamFrameTime = performance.now();
+            if (isImgActive && fpsBadge && (fpsBadge.textContent === "-- FPS" || fpsBadge.textContent === "0 FPS" || fpsBadge.textContent === "OFF")) {
+                fpsBadge.textContent = "LIVE";
+            }
             return;
         }
-        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 8000)) {
+
+        if (performance.now() - lastStreamFrameTime > 8000) {
             console.warn("[Stream] Stalled feed detected by watchdog, auto-reviving...");
             lastStreamFrameTime = performance.now();
             reconnectCameraStream(true);
@@ -1571,6 +1681,15 @@ function setupCameraListeners() {
             const span = btnToggle.querySelector("span");
             if (span) span.textContent = state.camera.enabled ? "Disable Cam" : "Enable Cam";
         }
+        const fpsBadge = document.getElementById("liveFpsBadge");
+        if (fpsBadge && !state.camera.enabled) {
+            fpsBadge.textContent = "OFF";
+            fpsFrames = 0;
+        }
+        const disabledOverlay = document.getElementById("chamberDisabledOverlay");
+        if (disabledOverlay) {
+            disabledOverlay.classList.toggle("hidden", state.camera.enabled);
+        }
         updateSnapshotButtonState();
         startChamberStream();
     }
@@ -1606,8 +1725,6 @@ function setupCameraListeners() {
             isTogglingCamera = false;
             btnToggle.style.opacity = "1";
         }
-
-        reconnectCameraStream(true);
     });
 
     // Stream Mode selector (WebRTC vs MJPEG)
@@ -1946,6 +2063,11 @@ let initialLightsSynced = false;
 let initialResolutionSynced = false;
 
 async function pollSystemStatus() {
+    // Stop polling if tab is hidden in background or system is in 10-minute inactivity sleep
+    if (document.hidden || systemSleepHandled) {
+        return;
+    }
+
     const pingStart = performance.now();
     fetch("/api/ping")
         .then(() => {
@@ -2076,10 +2198,17 @@ function setupInactivityHeartbeat() {
     const events = ["mousemove", "keydown", "click", "touchstart", "scroll"];
     events.forEach(evt => {
         window.addEventListener(evt, () => {
+            const wasAsleep = systemSleepHandled;
             lastUserInteraction = Date.now();
             userActiveSinceLastHeartbeat = true;
             ledAutoOffHandled = false;
             systemSleepHandled = false;
+
+            if (wasAsleep) {
+                // Instantly re-awaken system, notify backend, and resume polling
+                fetch("/api/heartbeat", { method: "POST" }).catch(() => {});
+                pollSystemStatus();
+            }
         }, { passive: true });
     });
 
@@ -2104,9 +2233,9 @@ function setupInactivityHeartbeat() {
     const ledTimeout = envDefaults.led_auto_off || 120;
     const systemSleepTimeout = envDefaults.inactivity_time || 600;
 
-    // Periodic heartbeat every 20 seconds while user is active
+    // Periodic heartbeat every 20 seconds while user is active and tab is visible
     setInterval(async () => {
-        if (userActiveSinceLastHeartbeat) {
+        if (userActiveSinceLastHeartbeat && !document.hidden && !systemSleepHandled) {
             try {
                 const res = await fetch("/api/heartbeat", { method: "POST" });
                 if (res.ok) {
@@ -2121,6 +2250,8 @@ function setupInactivityHeartbeat() {
 
     // Update countdown timer display every 1 second
     setInterval(() => {
+        if (document.hidden) return; // Do not update DOM timer if tab is backgrounded
+
         const elapsedSec = Math.floor((Date.now() - lastUserInteraction) / 1000);
 
         // Stage 1: WS2812B LED Auto-Off after 2 minutes (120s) - Camera stays ON
@@ -2131,7 +2262,7 @@ function setupInactivityHeartbeat() {
         }
 
         // Stage 2: Full System Shutdown after 10 minutes (600s) - Camera & system powered down
-        if (elapsedSec >= systemSleepTimeout && (state.camera.enabled || state.lights.power) && !systemSleepHandled) {
+        if (elapsedSec >= systemSleepTimeout && !systemSleepHandled) {
             systemSleepHandled = true;
             setMasterPower(false);
             if (state.camera.enabled) {
@@ -2145,9 +2276,14 @@ function setupInactivityHeartbeat() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ enabled: false })
-                });
+                }).catch(() => {});
             }
             showToast("Inactivity Timeout: System & camera powered down after 10m inactivity.");
+        }
+
+        if (systemSleepHandled || elapsedSec >= systemSleepTimeout) {
+            updateTimerText("00:00", true, "Sleep: Inactive");
+            return;
         }
 
         // Display countdown: If lights are currently ON and haven't reached 2m, show LED countdown
@@ -5207,6 +5343,13 @@ document.addEventListener("DOMContentLoaded", () => {
     // 6. Initial status query and start low-frequency heartbeat (every 2.5 seconds for instant multi-client sync)
     pollSystemStatus();
     setInterval(pollSystemStatus, 2500);
+
+    // Resume polling immediately when user switches back to this tab
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && !systemSleepHandled) {
+            pollSystemStatus();
+        }
+    });
 
     // Initial sync of RGB UI (do not send to backend on boot)
     syncRgbInputs(state.lights.color.r, state.lights.color.g, state.lights.color.b, false, false);

@@ -21,6 +21,7 @@ DEFAULT_ALLOWED_NETWORKS = [
     "192.168.88.0/23",  # covers 192.168.88.0 - 192.168.89.255
     "88.88.88.0/24",
     "10.10.1.0/24",
+    "10.101.27.0/24",   # Docker internal bridge network (FrontEnd dockge)
     "10.101.29.0/24",   # Docker internal bridge network
     "192.168.70.0/24",
     "172.19.176.0/24",
