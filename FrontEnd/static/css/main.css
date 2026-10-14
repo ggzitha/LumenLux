@@ -2223,6 +2223,16 @@ input[type="number"] {
     pointer-events: auto;
 }
 
+/* Firefox WebRender GPU Compositor Protection:
+   Prevent force-close/crash when overlay renders over active hardware video decoding surface. */
+@supports (-moz-appearance: none) {
+    .camera-settings-overlay {
+        background: rgba(10, 16, 28, 0.95) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+}
+
 /* Mobile & Portrait Screens: Right-Side Drawer (Wider for Sliders, Smaller Badges, 4x2 Toolbar Grid) */
 @media (max-width: 1024px),
 (orientation: portrait) {

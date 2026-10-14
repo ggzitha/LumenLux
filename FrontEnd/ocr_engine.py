@@ -1215,18 +1215,23 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
         is_standard = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
 
         crop_arr = np.array(crop) if isinstance(crop, Image.Image) else cv_crop
-        if crop_arr is not None and len(crop_arr.shape) == 3:
-            r_c = crop_arr[:, :, 0].astype(int)
-            g_c = crop_arr[:, :, 1].astype(int)
-            b_c = crop_arr[:, :, 2].astype(int)
-            green_lit = (g_c > 128) & (g_c > r_c + 18) & (g_c > b_c + 18)
-            if is_standard or np.count_nonzero(green_lit) > 60:
-                clean = np.where(green_lit, 0, 255).astype(np.uint8)
-                input_target = Image.fromarray(np.stack([clean] * 3, axis=-1))
-
         onnx_text, onnx_conf = onnx_ocr_engine.recognize(input_target, box=box)
         if onnx_text:
             onnx_val = extract_thermometer_value(onnx_text, box=box)
+
+        # If raw crop did not yield a valid number, attempt green VFD segment isolation as fallback
+        if (onnx_val is None or onnx_conf < 0.45) and crop_arr is not None and len(crop_arr.shape) == 3:
+            r_c = crop_arr[:, :, 0].astype(int)
+            g_c = crop_arr[:, :, 1].astype(int)
+            b_c = crop_arr[:, :, 2].astype(int)
+            green_lit = (g_c > 110) & (g_c > r_c + 15) & (g_c > b_c + 15)
+            if np.count_nonzero(green_lit) > 80:
+                clean = np.where(green_lit, 0, 255).astype(np.uint8)
+                fallback_target = Image.fromarray(np.stack([clean] * 3, axis=-1))
+                alt_text, alt_conf = onnx_ocr_engine.recognize(fallback_target, box=box)
+                alt_val = extract_thermometer_value(alt_text, box=box) if alt_text else None
+                if alt_val is not None and (onnx_val is None or alt_conf > onnx_conf):
+                    onnx_text, onnx_conf, onnx_val = alt_text, alt_conf, alt_val
 
     # If ONNX AI produced a confident valid numeric reading, return immediately!
     if onnx_val is not None and onnx_conf >= 0.40:

@@ -900,8 +900,35 @@ let lastFpsTime = performance.now();
 let lastStreamFrameTime = performance.now();
 let streamReconnectTimer = null;
 let chamberPeerConnection = null;
+let chamberMseSocket = null;
+let chamberMediaSource = null;
 let chamberStreamMode = localStorage.getItem("lumen_stream_mode") || "webrtc";
 let isWebRtcConnecting = false;
+
+function stopChamberMseStream() {
+    if (window._mseCatchupInterval) {
+        clearInterval(window._mseCatchupInterval);
+        window._mseCatchupInterval = null;
+    }
+    const video = document.getElementById("chamberVideo");
+    if (video) video.playbackRate = 1.0;
+    if (chamberMseSocket) {
+        try {
+            chamberMseSocket.onclose = null;
+            chamberMseSocket.onerror = null;
+            chamberMseSocket.close();
+        } catch (_) { }
+        chamberMseSocket = null;
+    }
+    if (chamberMediaSource) {
+        try {
+            if (chamberMediaSource.readyState === "open") {
+                chamberMediaSource.endOfStream();
+            }
+        } catch (_) { }
+        chamberMediaSource = null;
+    }
+}
 
 function stopChamberStreams() {
     if (chamberPeerConnection) {
@@ -910,6 +937,7 @@ function stopChamberStreams() {
         } catch (_) { }
         chamberPeerConnection = null;
     }
+    stopChamberMseStream();
     const video = document.getElementById("chamberVideo");
     if (video) {
         video.srcObject = null;
@@ -934,6 +962,11 @@ async function startChamberStream() {
         video.classList.add("hidden");
         img.classList.remove("hidden");
         img.src = `/stream?t=${Date.now()}`;
+        return;
+    }
+
+    if (chamberStreamMode === "mse") {
+        startChamberMseStream();
         return;
     }
 
@@ -968,9 +1001,9 @@ async function startChamberStream() {
         pc.oniceconnectionstatechange = () => {
             console.log("[WebRTC] ICE Connection State:", pc.iceConnectionState);
             if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
-                console.warn("[WebRTC] ICE disconnected, keeping MJPEG active...");
-                if (state.camera.enabled) {
-                    fallbackToMjpegStream();
+                console.warn("[WebRTC] ICE connection dropped, switching to hardware MSE H.264 stream...");
+                if (state.camera.enabled && chamberStreamMode === "webrtc") {
+                    startChamberMseStream();
                 }
             }
         };
@@ -1028,11 +1061,171 @@ async function startChamberStream() {
 
         console.log("[WebRTC] WebRTC peer connected and streaming!");
     } catch (err) {
-        console.warn("[WebRTC] WebRTC handshake failed, keeping MJPEG stream:", err);
-        fallbackToMjpegStream();
+        console.warn("[WebRTC] WebRTC handshake not available, transitioning to high-speed MSE H.264 stream:", err);
+        if (chamberStreamMode === "webrtc") {
+            chamberStreamMode = "mse";
+            localStorage.setItem("lumen_stream_mode", "mse");
+            const streamSelect = document.getElementById("streamModeSelect");
+            if (streamSelect) streamSelect.value = "mse";
+        }
+        if ('MediaSource' in window) {
+            startChamberMseStream();
+        } else {
+            fallbackToDirectMp4Stream();
+        }
     } finally {
         isWebRtcConnecting = false;
     }
+}
+
+function startChamberMseStream() {
+    const video = document.getElementById("chamberVideo");
+    const img = document.getElementById("cameraStream");
+    if (!video || !img) return;
+
+    if (!('MediaSource' in window)) {
+        console.warn("[MSE] MediaSource API not supported, attempting direct fMP4 / MJPEG fallback");
+        fallbackToDirectMp4Stream();
+        return;
+    }
+
+    stopChamberStreams();
+
+    try {
+        const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${wsProto}//${location.host}/api/ws`;
+        console.log("[MSE] Connecting to go2rtc WebSocket for MSE H.264 stream:", wsUrl);
+
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        chamberMseSocket = ws;
+
+        const ms = new MediaSource();
+        chamberMediaSource = ms;
+
+        video.srcObject = null;
+        video.src = URL.createObjectURL(ms);
+        img.classList.add("hidden");
+        video.classList.remove("hidden");
+
+        let sourceBuffer = null;
+        const queue = [];
+
+        const sendCodecs = () => {
+            if (ws.readyState === WebSocket.OPEN && ms.readyState === "open") {
+                const supported = [
+                    'avc1.640029',
+                    'avc1.42e01f',
+                    'avc1.42001f',
+                    'avc1.64002A',
+                    'avc1.640033'
+                ].filter(c => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)).join();
+                ws.send(JSON.stringify({ type: "mse", value: supported }));
+            }
+        };
+
+        ms.addEventListener("sourceopen", () => {
+            sendCodecs();
+        }, { once: true });
+
+        ws.onopen = () => {
+            sendCodecs();
+        };
+
+        ws.onmessage = (event) => {
+            if (typeof event.data === "string") {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "mse" && msg.value) {
+                        console.log("[MSE] Stream negotiated H.264 profile:", msg.value);
+                        if (!sourceBuffer && ms.readyState === "open") {
+                            sourceBuffer = ms.addSourceBuffer(msg.value);
+                            sourceBuffer.mode = "segments";
+                            sourceBuffer.addEventListener("updateend", () => {
+                                if (queue.length > 0 && !sourceBuffer.updating) {
+                                    sourceBuffer.appendBuffer(queue.shift());
+                                }
+                            });
+
+                            // Smooth live-edge catch-up without seek storms
+                            if (window._mseCatchupInterval) clearInterval(window._mseCatchupInterval);
+                            window._mseCatchupInterval = setInterval(() => {
+                                if (!video || video.paused || video.seeking || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+                                const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+                                const lag = end - video.currentTime;
+                                if (lag > 2.5) {
+                                    video.currentTime = Math.max(0, end - 0.1);
+                                    video.playbackRate = 1.0;
+                                } else if (lag > 0.8) {
+                                    video.playbackRate = 1.1;
+                                } else {
+                                    video.playbackRate = 1.0;
+                                }
+                            }, 1500);
+
+                            video.play().catch(e => console.warn("[MSE] Autoplay notice:", e));
+                        }
+                    }
+                } catch (e) {
+                    console.warn("[MSE] Message parse error:", e);
+                }
+            } else if (event.data instanceof ArrayBuffer) {
+                lastStreamFrameTime = performance.now();
+                if (sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
+                    try {
+                        sourceBuffer.appendBuffer(event.data);
+                    } catch (e) {
+                        if (sourceBuffer.buffered.length > 0) {
+                            const start = sourceBuffer.buffered.start(0);
+                            const end = sourceBuffer.buffered.end(0);
+                            if (end - start > 8) {
+                                try { sourceBuffer.remove(start, end - 4); } catch (_) { }
+                            }
+                        }
+                    }
+                } else if (sourceBuffer) {
+                    if (queue.length > 4) queue.shift();
+                    queue.push(event.data);
+                }
+            }
+        };
+
+        ws.onerror = (err) => {
+            console.warn("[MSE] WebSocket error:", err);
+        };
+
+        ws.onclose = () => {
+            console.log("[MSE] WebSocket stream closed");
+            if (state.camera.enabled && (chamberStreamMode === "mse" || chamberStreamMode === "webrtc")) {
+                if (!window._mseReconnectTimer) {
+                    window._mseReconnectTimer = setTimeout(() => {
+                        window._mseReconnectTimer = null;
+                        if (state.camera.enabled && !chamberMseSocket && !chamberPeerConnection) {
+                            startChamberMseStream();
+                        }
+                    }, 4000);
+                }
+            }
+        };
+    } catch (err) {
+        console.warn("[MSE] Failed to initialize MSE stream:", err);
+        fallbackToDirectMp4Stream();
+    }
+}
+
+function fallbackToDirectMp4Stream() {
+    const video = document.getElementById("chamberVideo");
+    const img = document.getElementById("cameraStream");
+    if (!video || !img) return;
+
+    console.log("[Stream] Attempting direct fMP4 HTTP video fallback...");
+    img.classList.add("hidden");
+    video.classList.remove("hidden");
+    video.srcObject = null;
+    video.src = `/api/stream.mp4?t=${Date.now()}`;
+    video.play().catch(() => {
+        fallbackToMjpegStream();
+    });
 }
 
 function fallbackToMjpegStream() {
@@ -1040,23 +1233,11 @@ function fallbackToMjpegStream() {
     const img = document.getElementById("cameraStream");
     if (!video || !img) return;
 
+    stopChamberStreams();
     video.classList.add("hidden");
     img.classList.remove("hidden");
     if (!img.src || !img.src.includes("/stream")) {
         img.src = `/stream?t=${Date.now()}`;
-    }
-
-    // On mobile devices, retry WebRTC every 12s so browser is not stuck in rapid reconnect loops
-    if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && state.camera.enabled && chamberStreamMode === "webrtc") {
-        if (!window._webrtcRetryTimer) {
-            window._webrtcRetryTimer = setTimeout(() => {
-                window._webrtcRetryTimer = null;
-                if (state.camera.enabled && !chamberPeerConnection) {
-                    console.log("[Stream] Mobile auto-retrying WebRTC stream reconnection...");
-                    startChamberStream();
-                }
-            }, 12000);
-        }
     }
 }
 
@@ -1064,7 +1245,7 @@ function reconnectCameraStream(immediate = false) {
     if (streamReconnectTimer) clearTimeout(streamReconnectTimer);
     streamReconnectTimer = setTimeout(() => {
         if (state.camera.enabled) {
-            if (chamberStreamMode === "webrtc") {
+            if (chamberStreamMode === "webrtc" || chamberStreamMode === "mse") {
                 startChamberStream();
             } else {
                 const img = document.getElementById("cameraStream");
@@ -1106,6 +1287,11 @@ function initFpsCounter() {
     }
 
     if (streamVideo) {
+        streamVideo.addEventListener("timeupdate", onFrameReceived);
+        streamVideo.addEventListener("playing", () => {
+            lastStreamFrameTime = performance.now();
+        });
+
         if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
             function frameCallback() {
                 if (streamVideo.videoWidth > 0 && !streamVideo.classList.contains("hidden")) {
@@ -1114,8 +1300,6 @@ function initFpsCounter() {
                 streamVideo.requestVideoFrameCallback(frameCallback);
             }
             streamVideo.requestVideoFrameCallback(frameCallback);
-        } else {
-            streamVideo.addEventListener("timeupdate", onFrameReceived);
         }
 
         streamVideo.addEventListener("click", () => {
@@ -1123,14 +1307,19 @@ function initFpsCounter() {
         });
     }
 
-    // Watchdog: If no frames received for 5 seconds while enabled, auto-revive
+    // Watchdog: If no frames received for 8 seconds while camera is enabled and not playing, auto-revive
     setInterval(() => {
-        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 5000)) {
+        const isVideoActive = streamVideo && !streamVideo.classList.contains("hidden") && (streamVideo.readyState >= 2 || (!streamVideo.paused && streamVideo.currentTime > 0));
+        if (isVideoActive) {
+            lastStreamFrameTime = performance.now();
+            return;
+        }
+        if (state.camera.enabled && (performance.now() - lastStreamFrameTime > 8000)) {
             console.warn("[Stream] Stalled feed detected by watchdog, auto-reviving...");
             lastStreamFrameTime = performance.now();
             reconnectCameraStream(true);
         }
-    }, 3000);
+    }, 4000);
 }
 
 function applyViewportTransforms() {
@@ -1303,21 +1492,29 @@ async function updateCameraSettings() {
     }
 }
 
-const sendHardwareControl = debounce(async (control, value) => {
-    try {
-        await fetch("/api/camera/control", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                camera_id: state.camera.active_id,
-                control: control,
-                value: parseInt(value, 10)
-            })
-        });
-    } catch (e) {
-        console.warn("Control update failed:", e);
+const activeControlTimeouts = {};
+function sendHardwareControl(control, value) {
+    if (activeControlTimeouts[control]) {
+        clearTimeout(activeControlTimeouts[control]);
     }
-}, 150);
+    activeControlTimeouts[control] = setTimeout(async () => {
+        delete activeControlTimeouts[control];
+        const camId = state.camera.active_id || (connectedCamerasList[0]?.id || "video0");
+        try {
+            await fetch("/api/camera/control", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    camera_id: camId,
+                    control: control,
+                    value: parseInt(value, 10)
+                })
+            });
+        } catch (e) {
+            console.warn(`Control update failed for ${control}:`, e);
+        }
+    }, 100);
+}
 
 function setupCameraListeners() {
     // In-Frame Mobile Camera Settings Overlay Controls
@@ -1330,7 +1527,6 @@ function setupCameraListeners() {
         if (!overlay) return;
         const willOpen = typeof open === "boolean" ? open : !overlay.classList.contains("open");
         overlay.classList.toggle("open", willOpen);
-        reconnectCameraStream(false);
     }
 
     btnOpenOverlay?.addEventListener("click", () => toggleOverlay(true));
@@ -1421,7 +1617,12 @@ function setupCameraListeners() {
         streamModeSelect.addEventListener("change", (e) => {
             chamberStreamMode = e.target.value;
             localStorage.setItem("lumen_stream_mode", chamberStreamMode);
-            showToast(`Stream engine set to: ${chamberStreamMode === "webrtc" ? "WebRTC / H.264" : "MJPEG"}`);
+            const modeNames = {
+                webrtc: "WebRTC / H.264 (Low Bandwidth)",
+                mse: "MSE / fMP4 (Ultra Stable)",
+                mjpeg: "MJPEG (Legacy)"
+            };
+            showToast(`Stream engine set to: ${modeNames[chamberStreamMode] || chamberStreamMode}`);
             startChamberStream();
         });
     }
@@ -1589,10 +1790,11 @@ async function resetCameraDefaults() {
 function syncControlsUIFromData(controls) {
     if (!controls) return;
     function updateField(sliderId, numId, val) {
+        if (val === undefined || val === null) return;
         const s = document.getElementById(sliderId);
         const n = document.getElementById(numId);
-        if (s) s.value = val;
-        if (n) n.value = val;
+        if (s && document.activeElement !== s) s.value = val;
+        if (n && document.activeElement !== n) n.value = val;
     }
 
     // Video Proc Amp
@@ -1611,15 +1813,15 @@ function syncControlsUIFromData(controls) {
     if (controls.white_balance_automatic?.value !== undefined) {
         const wbAuto = document.getElementById("vpaWbAuto");
         const isAuto = !!controls.white_balance_automatic.value;
-        if (wbAuto) wbAuto.checked = isAuto;
+        if (wbAuto && document.activeElement !== wbAuto) wbAuto.checked = isAuto;
         const s = document.getElementById("vpaWbSlider");
         const n = document.getElementById("vpaWbNum");
-        if (s) s.disabled = isAuto;
-        if (n) n.disabled = isAuto;
+        if (s && document.activeElement !== s) s.disabled = isAuto;
+        if (n && document.activeElement !== n) n.disabled = isAuto;
     }
     if (controls.power_line_frequency?.value !== undefined) {
         const pl = document.getElementById("vpaPowerlineFreq");
-        if (pl) pl.value = controls.power_line_frequency.value.toString();
+        if (pl && document.activeElement !== pl) pl.value = controls.power_line_frequency.value.toString();
     }
 
     // Camera Control
@@ -1633,11 +1835,11 @@ function syncControlsUIFromData(controls) {
     if (controls.focus_automatic_continuous?.value !== undefined) {
         const fAuto = document.getElementById("ctrlFocusAuto");
         const isAuto = !!controls.focus_automatic_continuous.value;
-        if (fAuto) fAuto.checked = isAuto;
+        if (fAuto && document.activeElement !== fAuto) fAuto.checked = isAuto;
         const s = document.getElementById("ctrlFocusSlider");
         const n = document.getElementById("ctrlFocusNum");
-        if (s) s.disabled = isAuto;
-        if (n) n.disabled = isAuto;
+        if (s && document.activeElement !== s) s.disabled = isAuto;
+        if (n && document.activeElement !== n) n.disabled = isAuto;
     }
 
     if (controls.exposure_time_absolute?.value !== undefined) {
@@ -1647,20 +1849,22 @@ function syncControlsUIFromData(controls) {
         const expAuto = document.getElementById("ctrlExpAuto");
         // 3 = auto, 1 = manual
         const isAuto = controls.auto_exposure.value === 3;
-        if (expAuto) expAuto.checked = isAuto;
+        if (expAuto && document.activeElement !== expAuto) expAuto.checked = isAuto;
         const s = document.getElementById("ctrlExpSlider");
         const n = document.getElementById("ctrlExpNum");
-        if (s) s.disabled = isAuto;
-        if (n) n.disabled = isAuto;
+        if (s && document.activeElement !== s) s.disabled = isAuto;
+        if (n && document.activeElement !== n) n.disabled = isAuto;
     }
 
     if (controls.exposure_dynamic_framerate?.value !== undefined) {
         const llc = document.getElementById("ctrlLowLightComp");
-        if (llc) llc.checked = !!controls.exposure_dynamic_framerate.value;
+        if (llc && document.activeElement !== llc) llc.checked = !!controls.exposure_dynamic_framerate.value;
     }
 
     // Refresh visibility of circular reset arrows after syncing from backend
-    window.updateResetButtonsState?.();
+    try {
+        window.updateResetButtonsState?.();
+    } catch (_) { }
 }
 
 function setupDirectShowControls() {
@@ -1794,8 +1998,8 @@ async function pollSystemStatus() {
                 if (elDr) elDr.textContent = cpuStr;
             }
 
-            // Sync camera controls from hardware
-            if (!initialControlsSynced && data.camera && data.camera.controls) {
+            // Continuously sync camera controls from hardware across all clients
+            if (data.camera && data.camera.controls) {
                 syncControlsUIFromData(data.camera.controls);
                 initialControlsSynced = true;
             }
@@ -1821,13 +2025,21 @@ async function pollSystemStatus() {
                 }
             }
 
-            // Sync lights initial hardware power
-            if (!initialLightsSynced && data.lights) {
-                if (data.lights.power !== undefined) {
+            // Continuously sync lights power and state across all clients
+            if (data.lights && data.lights.power !== undefined) {
+                const pwrBtn = document.getElementById("btnPowerToggle");
+                const isInteractingPwr = (document.activeElement === pwrBtn);
+                if (!isInteractingPwr && state.lights.power !== data.lights.power) {
                     state.lights.power = data.lights.power;
                     updateLedVisualizer();
                     const statusText = document.getElementById("powerStatusText");
                     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
+                    if (pwrBtn) {
+                        pwrBtn.classList.toggle("active", state.lights.power);
+                        pwrBtn.classList.toggle("danger", !state.lights.power);
+                    }
+                    const mobPwr = document.getElementById("btnMobileLedPower");
+                    if (mobPwr) mobPwr.classList.toggle("active", state.lights.power);
                 }
                 initialLightsSynced = true;
             }
@@ -1972,7 +2184,6 @@ function setupMobileLedDrawer() {
         if (backdrop) {
             backdrop.classList.toggle("active", willOpen);
         }
-        reconnectCameraStream(false);
     }
 
     if (btnHamburger) {
@@ -4993,9 +5204,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     refreshCameraList();
 
-    // 6. Initial status query and start low-frequency heartbeat (every 6 seconds)
+    // 6. Initial status query and start low-frequency heartbeat (every 2.5 seconds for instant multi-client sync)
     pollSystemStatus();
-    setInterval(pollSystemStatus, 6000);
+    setInterval(pollSystemStatus, 2500);
 
     // Initial sync of RGB UI (do not send to backend on boot)
     syncRgbInputs(state.lights.color.r, state.lights.color.g, state.lights.color.b, false, false);

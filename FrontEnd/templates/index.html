@@ -659,8 +659,8 @@
                                             <label class="field-label" for="streamModeSelect">Stream Engine /
                                                 Protocol</label>
                                             <select id="streamModeSelect" class="select-custom">
-                                                <option value="webrtc" selected>WebRTC / H.264 (Low Bandwidth & Latency)
-                                                </option>
+                                                <option value="webrtc" selected>WebRTC / H.264 (Low Bandwidth & Latency)</option>
+                                                <option value="mse">MSE / fMP4 (Ultra Stable Low Bandwidth)</option>
                                                 <option value="mjpeg">MJPEG (Legacy Raw Stream)</option>
                                             </select>
                                         </div>
@@ -1729,7 +1729,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=6.1"></script>
+    <script src="/static/js/app.js?v=7.2"></script>
 </body>
 
 </html>

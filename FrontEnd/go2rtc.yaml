@@ -23,5 +23,6 @@ ffmpeg:
 streams:
   chamber:
     - "http://${BECKEND_RPI_IP:192.168.88.21}:${BECKEND_RPI_PORT:5000}/api/camera/stream"
+    - "ffmpeg:http://${BECKEND_RPI_IP:192.168.88.21}:${BECKEND_RPI_PORT:5000}/api/camera/stream#video=h264"
     - "ffmpeg:chamber#video=h264"
 

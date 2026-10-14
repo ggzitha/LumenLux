@@ -383,7 +383,7 @@ api:
   origin: "*"
 
 webrtc:
-  listen: ":8555"
+  listen: ":8557"
   candidates:
     - stun:8557
 
@@ -393,6 +393,7 @@ ffmpeg:
 streams:
   chamber:
     - "{rpi_stream}"
+    - "ffmpeg:{rpi_stream}#video=h264"
     - "ffmpeg:chamber#video=h264"
 """
         with open(yaml_path, "w", encoding="utf-8") as f:
@@ -892,7 +893,7 @@ _status_cache = {"data": None, "timestamp": 0.0}
 @app.get("/api/status")
 async def proxy_status(user: str = Depends(require_auth)):
     now = time.time()
-    if _status_cache["data"] and (now - _status_cache["timestamp"] < 2.5):
+    if _status_cache["data"] and (now - _status_cache["timestamp"] < 1.0):
         return _status_cache["data"]
 
     try:
@@ -926,6 +927,7 @@ async def proxy_cameras(user: str = Depends(require_auth)):
 @app.post("/api/camera/select")
 async def proxy_camera_select(request: Request, user: str = Depends(require_auth)):
     payload = await request.json()
+    _status_cache["data"] = None
     try:
         res = await backend_client.post("/api/camera/select", json=payload, timeout=5.0)
         return res.json()
@@ -936,6 +938,7 @@ async def proxy_camera_select(request: Request, user: str = Depends(require_auth
 @app.post("/api/camera/toggle")
 async def proxy_camera_toggle(request: Request, user: str = Depends(require_auth)):
     payload = await request.json()
+    _status_cache["data"] = None
     try:
         res = await backend_client.post("/api/camera/toggle", json=payload, timeout=4.0)
         return res.json()
@@ -946,6 +949,7 @@ async def proxy_camera_toggle(request: Request, user: str = Depends(require_auth
 @app.post("/api/camera/control")
 async def proxy_camera_control(request: Request, user: str = Depends(require_auth)):
     payload = await request.json()
+    _status_cache["data"] = None
     try:
         res = await backend_client.post("/api/camera/control", json=payload, timeout=4.0)
         return res.json()
@@ -956,6 +960,7 @@ async def proxy_camera_control(request: Request, user: str = Depends(require_aut
 @app.post("/api/camera/reset_defaults")
 async def proxy_camera_reset_defaults(request: Request, user: str = Depends(require_auth)):
     payload = await request.json()
+    _status_cache["data"] = None
     try:
         res = await backend_client.post("/api/camera/reset_defaults", json=payload, timeout=4.0)
         return res.json()
@@ -975,6 +980,7 @@ async def proxy_lights_get(user: str = Depends(require_auth)):
 @app.post("/api/lights")
 async def proxy_lights_post(request: Request, user: str = Depends(require_auth)):
     payload = await request.json()
+    _status_cache["data"] = None
     try:
         res = await backend_client.post("/api/lights", json=payload, timeout=4.0)
         return res.json()
@@ -1083,6 +1089,8 @@ async def proxy_webrtc(request: Request):
                     content=body_str.encode("utf-8"),
                     headers={"Content-Type": "application/sdp"}
                 )
+                if res.status_code != 200:
+                    logger.warning("[WebRTC Proxy] go2rtc /api/webrtc returned status %d: %s", res.status_code, res.text[:200])
                 return Response(content=res.content, status_code=res.status_code, media_type=res.headers.get("content-type", "application/sdp"))
         else:
             async with httpx.AsyncClient(timeout=6.0) as client:
