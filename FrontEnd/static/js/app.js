@@ -305,9 +305,29 @@ function updateBulbLampVisualizer(rgbColor, glowColor, isOn, effectName) {
     }
 }
 
+// Cached LED node list + last rendered signature (avoids re-styling identical frames)
+let vizNodesCache = null;
+let vizLastStaticSig = "";
+let vizStepScale = 1;
+
 function updateLedVisualizer() {
-    const nodes = document.querySelectorAll(".virtual-led-node");
+    if (!vizNodesCache || !vizNodesCache.length || !vizNodesCache[0].isConnected) {
+        vizNodesCache = document.querySelectorAll(".virtual-led-node");
+    }
+    const nodes = vizNodesCache;
     if (!nodes.length) return;
+
+    // Non-animated states only need to be painted once per change
+    const fx = state.lights.effect;
+    const isAnimated = state.lights.power && (fx === "rainbow" || fx === "breathing" || fx === "marquee");
+    if (!isAnimated) {
+        const c = state.lights.color;
+        const sig = `${state.lights.power}|${fx}|${c.r},${c.g},${c.b}|${state.lights.brightness}|${nodes.length}`;
+        if (sig === vizLastStaticSig) return;
+        vizLastStaticSig = sig;
+    } else {
+        vizLastStaticSig = "";
+    }
 
     if (!state.lights.power) {
         nodes.forEach(n => {
@@ -331,7 +351,7 @@ function updateLedVisualizer() {
         });
         updateBulbLampVisualizer(rgbStr, glowStr, true, "STATIC COLOR");
     } else if (effect === "rainbow") {
-        animStep = (animStep + 2) % 360;
+        animStep = (animStep + 2 * vizStepScale) % 360;
         nodes.forEach((n, i) => {
             const hue = (animStep + (i * 360 / nodes.length)) % 360;
             n.style.backgroundColor = `hsl(${hue}, 100%, ${Math.round(50 * brightFactor)}%)`;
@@ -342,7 +362,7 @@ function updateLedVisualizer() {
         const rainbowGlow = `rgba(${r}, ${g}, ${b}, ${brightFactor * 0.9})`;
         updateBulbLampVisualizer(rainbowColor, rainbowGlow, true, "RAINBOW FX");
     } else if (effect === "breathing") {
-        animStep = (animStep + 0.05) % (Math.PI * 2);
+        animStep = (animStep + 0.05 * vizStepScale) % (Math.PI * 2);
         const pulse = (Math.sin(animStep) + 1) / 2 * brightFactor;
         const rgbStr = `rgb(${Math.round(r * pulse)}, ${Math.round(g * pulse)}, ${Math.round(b * pulse)})`;
         const glowStr = `0 0 10px rgba(${r}, ${g}, ${b}, ${pulse})`;
@@ -379,9 +399,15 @@ function updateLedVisualizer() {
 }
 
 function startVisualizerLoop() {
-    function loop() {
-        updateLedVisualizer();
+    // Throttled render loop: 30fps on Chromium desktop, 20fps on lite (Firefox/Safari/mobile)
+    const frameInterval = document.documentElement.classList.contains("lite-fx") ? 50 : 33;
+    vizStepScale = frameInterval / 16.67; // keep effect speed identical to the old 60fps loop
+    let lastTs = 0;
+    function loop(ts) {
         animFrameId = requestAnimationFrame(loop);
+        if (document.hidden || ts - lastTs < frameInterval) return;
+        lastTs = ts;
+        updateLedVisualizer();
     }
     if (animFrameId) cancelAnimationFrame(animFrameId);
     animFrameId = requestAnimationFrame(loop);
@@ -903,6 +929,12 @@ let chamberPeerConnection = null;
 let chamberMseSocket = null;
 const isFirefox = /Firefox|FxiOS|Focus/i.test(navigator.userAgent);
 const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(navigator.userAgent) || ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+// Enable hardware-efficient rendering profile (lite-fx) on Firefox, Safari, and Mobile
+if (isFirefox || isMobileDevice || isSafari || window.innerWidth < 1024) {
+    document.documentElement.classList.add("lite-fx");
+}
 
 // In Firefox (all platforms) and on all mobile / touch devices, WebRTC and MSE have severe
 // browser-level codec negotiation failures with go2rtc (500 EOF and black video surface).

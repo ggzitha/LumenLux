@@ -3872,3 +3872,68 @@ input[type="number"] {
     background: rgba(255, 255, 255, 0.08);
     color: var(--text-primary);
 }
+
+/* =========================================================================
+   Performance Optimization for Firefox, Safari, and Mobile Browsers (Lite-FX)
+   Eliminates GPU raster stalls and compositing lag from heavy backdrop-blur
+   and 100px Gaussian filters while preserving sleek cyberpunk dark aesthetic.
+   ========================================================================= */
+
+html.lite-fx .ambient-sphere,
+@supports (-moz-appearance: none) {
+    .ambient-sphere {
+        display: none !important;
+    }
+}
+
+html.lite-fx .glass-panel,
+@supports (-moz-appearance: none) {
+    .glass-panel {
+        backdrop-filter: blur(4px) !important;
+        -webkit-backdrop-filter: blur(4px) !important;
+        background: rgba(16, 23, 38, 0.94) !important;
+        box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.5) !important;
+    }
+}
+
+html.lite-fx .app-header,
+@supports (-moz-appearance: none) {
+    .app-header {
+        backdrop-filter: blur(6px) !important;
+        -webkit-backdrop-filter: blur(6px) !important;
+        background: rgba(10, 15, 26, 0.96) !important;
+    }
+}
+
+html.lite-fx .modal-card,
+html.lite-fx .ocr-config-card,
+html.lite-fx .device-camera-dialog,
+html.lite-fx .ocr-auth-card,
+@supports (-moz-appearance: none) {
+    .modal-card,
+    .ocr-config-card,
+    .device-camera-dialog,
+    .ocr-auth-card {
+        backdrop-filter: blur(4px) !important;
+        -webkit-backdrop-filter: blur(4px) !important;
+        background: #0f172a !important;
+    }
+}
+
+/* Mobile & Touch Layout Performance Tuning */
+@media (max-width: 1024px) {
+    .ambient-sphere {
+        display: none !important;
+    }
+    .glass-panel {
+        backdrop-filter: blur(4px) !important;
+        -webkit-backdrop-filter: blur(4px) !important;
+        background: rgba(16, 23, 38, 0.94) !important;
+        box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.5) !important;
+    }
+    .app-header {
+        backdrop-filter: blur(6px) !important;
+        -webkit-backdrop-filter: blur(6px) !important;
+        background: rgba(10, 15, 26, 0.96) !important;
+    }
+}

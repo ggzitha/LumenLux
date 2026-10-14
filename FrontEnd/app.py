@@ -891,7 +891,12 @@ async def auto_detect_boxes(project_id: str, payload: dict, user: str = Depends(
         return {"status": "error", "message": "No image available for detection"}
 
     detection_result = detect_thermometers_in_image(raw_bytes)
-    return {"status": "ok", **detection_result}
+    boxes = detection_result.get("boxes", [])
+    if boxes and proj_dir.exists():
+        meta = get_project_metadata(proj_dir)
+        meta["boxes"] = boxes
+        save_project_metadata(proj_dir, meta)
+    return {"status": "ok", "detected_count": len(boxes), **detection_result}
 
 
 
@@ -1214,278 +1219,8 @@ async def proxy_go2rtc_ws(websocket: WebSocket):
 
 
 # ==============================================================================
-# OCR CALIBRATION STUDIO & PROJECT MANAGEMENT API ROUTES
+# OCR STUDIO ROI TESTING, EXCEL EXPORT & ASSET SERVING
 # ==============================================================================
-PROJECTS_DIR = IMAGES_DIR / "projects"
-PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-@app.post("/api/ocr/verify")
-async def verify_ocr_password(request: Request):
-    """Verify security password required to unlock OCR studio features."""
-    try:
-        data = await request.json()
-        password = data.get("password", "")
-        if secrets.compare_digest(password, OCR_PASSWORD):
-            return {"success": True, "message": "OCR access unlocked"}
-        return JSONResponse({"success": False, "error": "Invalid OCR password. Access denied."}, status_code=403)
-    except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
-
-
-@app.get("/api/ocr/projects")
-async def list_ocr_projects(user: str = Depends(require_auth)):
-    """Return catalog of calibration projects and their captured snapshots."""
-    projects = []
-    if not PROJECTS_DIR.exists():
-        return []
-
-    for proj_dir in sorted(PROJECTS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if not proj_dir.is_dir():
-            continue
-
-        meta_file = proj_dir / "project.json"
-        meta = {}
-        if meta_file.exists():
-            try:
-                with open(meta_file, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-            except Exception:
-                pass
-
-        proj_name = meta.get("name", proj_dir.name)
-        boxes = meta.get("boxes", [])
-
-        # Find snapshots inside project directory
-        snapshots = [
-            f.name for f in sorted(
-                list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")) + list(proj_dir.glob("*.jpeg")),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True
-            )
-            if not f.name.startswith(".")
-        ]
-
-        projects.append({
-            "id": proj_dir.name,
-            "name": proj_name,
-            "created_at": meta.get("created_at", proj_dir.stat().st_ctime),
-            "boxes": boxes,
-            "snapshots": snapshots
-        })
-
-    return projects
-
-
-@app.post("/api/ocr/projects")
-async def create_ocr_project(request: Request, user: str = Depends(require_auth)):
-    """Create a new calibration project directory and metadata configuration."""
-    try:
-        data = await request.json()
-        name = str(data.get("name", "")).strip()
-        if not name:
-            return JSONResponse({"status": "error", "error": "Project name cannot be empty."}, status_code=400)
-
-        # Generate filesystem-safe slug directory name (strip spaces, dots, underscores)
-        slug = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name).strip("_ .")
-        if not slug:
-            slug = f"project_{int(time.time())}"
-
-        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-        target_dir = PROJECTS_DIR / slug
-        counter = 1
-        base_slug = slug
-        while target_dir.exists():
-            slug = f"{base_slug}_{counter}"
-            target_dir = PROJECTS_DIR / slug
-            counter += 1
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        meta = {
-            "id": slug,
-            "name": name,
-            "created_at": time.time(),
-            "boxes": []
-        }
-        with open(target_dir / "project.json", "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
-
-        return {
-            "status": "success",
-            "project": {
-                "id": slug,
-                "name": name,
-                "created_at": meta["created_at"],
-                "boxes": [],
-                "snapshots": []
-            }
-        }
-    except Exception as e:
-        logger.error("Failed to create project: %s", e)
-        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
-
-
-@app.get("/api/ocr/projects/{project_id}")
-async def get_ocr_project(project_id: str, user: str = Depends(require_auth)):
-    """Get project configuration, bounding boxes, and snapshot list."""
-    proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    meta_file = proj_dir / "project.json"
-    meta = {}
-    if meta_file.exists():
-        try:
-            with open(meta_file, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            pass
-
-    snapshots = [
-        f.name for f in sorted(
-            list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")) + list(proj_dir.glob("*.jpeg")),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-        if not f.name.startswith(".")
-    ]
-
-    return {
-        "id": project_id,
-        "name": meta.get("name", project_id),
-        "boxes": meta.get("boxes", []),
-        "snapshots": snapshots
-    }
-
-
-@app.delete("/api/ocr/projects/{project_id}")
-async def delete_ocr_project(project_id: str, user: str = Depends(require_auth)):
-    """Delete a calibration project directory and all of its contents."""
-    proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    try:
-        import shutil
-        shutil.rmtree(proj_dir)
-        return {"status": "success", "message": f"Project {project_id} deleted"}
-    except Exception as e:
-        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
-
-
-@app.post("/api/ocr/projects/{project_id}/boxes")
-async def update_project_boxes(project_id: str, request: Request, user: str = Depends(require_auth)):
-    """Update ROI bounding boxes configuration for the specified project."""
-    proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    data = await request.json()
-    boxes = data.get("boxes", [])
-
-    meta_file = proj_dir / "project.json"
-    meta = {}
-    if meta_file.exists():
-        try:
-            with open(meta_file, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            pass
-
-    meta["boxes"] = boxes
-    with open(meta_file, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
-
-    return {"status": "success", "count": len(boxes)}
-
-
-@app.post("/api/ocr/projects/{project_id}/save_snapshot")
-async def save_project_snapshot(project_id: str, request: Request, user: str = Depends(require_auth)):
-    """Save a captured snapshot image directly into the active project directory."""
-    proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    try:
-        data = await request.json()
-        img_b64 = data.get("image_base64", "")
-        filename = data.get("filename", "")
-
-        if not img_b64 or not filename:
-            return JSONResponse({"status": "error", "error": "Missing image or filename"}, status_code=400)
-
-        # Sanitize filename
-        filename = os.path.basename(filename)
-        if "," in img_b64:
-            img_b64 = img_b64.split(",", 1)[1]
-
-        raw_bytes = base64.b64decode(img_b64)
-        target_path = proj_dir / filename
-        with open(target_path, "wb") as f:
-            f.write(raw_bytes)
-
-        logger.info("Saved snapshot to project %s: %s (%d bytes)", project_id, filename, len(raw_bytes))
-        return {"status": "success", "filename": filename, "path": str(target_path)}
-    except Exception as e:
-        logger.error("Failed to save snapshot to project: %s", e)
-        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
-
-
-@app.post("/api/ocr/projects/{project_id}/detect")
-async def detect_project_displays(project_id: str, request: Request, user: str = Depends(require_auth)):
-    """Auto-detect digital thermometers and check for unsupported analog needle meters."""
-    proj_dir = PROJECTS_DIR / project_id
-    if not proj_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    try:
-        data = await request.json()
-        img_b64 = data.get("image_base64", "")
-        if not img_b64:
-            return JSONResponse({"status": "error", "error": "No image data provided"}, status_code=400)
-
-        if "," in img_b64:
-            img_b64 = img_b64.split(",", 1)[1]
-
-        raw_bytes = base64.b64decode(img_b64)
-        detect_result = detect_thermometers_in_image(raw_bytes)
-
-        if not detect_result.get("is_digital", True) or detect_result.get("is_unsupported"):
-            return {
-                "status": "warning",
-                "is_digital": False,
-                "is_unsupported": True,
-                "unsupported_type": detect_result.get("unsupported_type", "unsupported"),
-                "message": detect_result.get("message", "Non-digital thermometer detected. Only digital thermometers with LCD/VFD/LED displays are supported."),
-                "boxes": []
-            }
-
-        boxes = detect_result.get("boxes", [])
-        if boxes:
-            # Update project.json with newly detected boxes
-            meta_file = proj_dir / "project.json"
-            meta = {}
-            if meta_file.exists():
-                try:
-                    with open(meta_file, "r", encoding="utf-8") as f:
-                        meta = json.load(f)
-                except Exception:
-                    pass
-            meta["boxes"] = boxes
-            with open(meta_file, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2)
-
-        return {
-            "status": "success",
-            "is_digital": True,
-            "is_unsupported": False,
-            "detected_count": len(boxes),
-            "boxes": boxes
-        }
-    except Exception as e:
-        logger.error("Detection endpoint failed: %s", e)
-        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
 
 
 
@@ -1496,7 +1231,7 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
     on the latest snapshot or live camera frame. Returns crop thumbnail base64 and recognized reading.
     """
     record_activity()
-    proj_dir = PROJECTS_DIR / project_id
+    proj_dir = resolve_project_dir(project_id)
     payload = await request.json()
     box = payload.get("box", {})
     image_b64 = payload.get("image_base64")
@@ -1562,7 +1297,7 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
 @app.get("/api/ocr/projects/{project_id}/export")
 async def export_project_excel(project_id: str, user: str = Depends(require_auth)):
     """Generate Excel (.xlsx) calibration report with embedded snapshot images and OCR readouts."""
-    proj_dir = PROJECTS_DIR / project_id
+    proj_dir = resolve_project_dir(project_id)
     if not proj_dir.is_dir():
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1596,7 +1331,7 @@ async def export_project_excel(project_id: str, user: str = Depends(require_auth
 @app.get("/api/ocr/projects/{project_id}/snapshots/{filename}")
 async def get_project_snapshot(project_id: str, filename: str, user: str = Depends(require_auth)):
     """Serve individual snapshot image from project directory."""
-    proj_dir = PROJECTS_DIR / project_id
+    proj_dir = resolve_project_dir(project_id)
     clean_name = os.path.basename(filename)
     file_path = proj_dir / clean_name
     if not file_path.is_file():

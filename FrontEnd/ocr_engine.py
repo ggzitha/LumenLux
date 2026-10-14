@@ -216,66 +216,154 @@ class OnnxOcrEngine:
             if h < 8 or w < 8:
                 return "", 0.0
 
-            # If glowing green digits (Fluke 1502A / LED) present, crop tightly around active digits
-            r, g, b = arr[:,:,0].astype(int), arr[:,:,1].astype(int), arr[:,:,2].astype(int)
-            mask = ((g - np.maximum(r, b)) > 18) & (g > 115)
-            if np.count_nonzero(mask) >= 25:
-                y_idx, x_idx = np.where(mask)
-                pad_x, pad_y = 8, 6
-                min_y = max(0, int(np.min(y_idx)) - pad_y)
-                max_y = min(h, int(np.max(y_idx)) + pad_y)
-                min_x = max(0, int(np.min(x_idx)) - pad_x)
-                max_x = min(w, int(np.max(x_idx)) + pad_x)
-                if (max_y - min_y) > 10 and (max_x - min_x) > 15:
-                    arr = arr[min_y:max_y, min_x:max_x]
-                    h, w = arr.shape[:2]
+            cam_type = (box.get("camera_type") or box.get("target") or "").lower() if box else ""
+            lbl = str(box.get("label", "")).lower() if box else ""
+            is_std = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
 
-            target_h = 48
-            target_w = max(48, int(np.ceil(int(target_h * (w / float(h))) / 32) * 32))
-            
-            if HAS_CV2 and cv2 is not None:
-                resized = cv2.resize(arr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-            else:
-                resized = np.array(Image.fromarray(arr).resize((target_w, target_h), Image.Resampling.BILINEAR))
+            total_px = float(w * h)
+            r = arr[:, :, 0].astype(int)
+            g = arr[:, :, 1].astype(int)
+            b = arr[:, :, 2].astype(int)
+            gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if (HAS_CV2 and cv2 is not None and len(arr.shape) == 3) else None
 
-            if str(getattr(self, "model_version", "v4")).lower().startswith("v6"):
-                # PP-OCRv6 ImageNet normalization
-                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-                std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-                norm = (resized.astype(np.float32) / 255.0 - mean) / std
-            else:
-                # PP-OCRv4 normalization
-                norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
-            tensor = np.expand_dims(np.transpose(norm, (2, 0, 1)), axis=0)
+            # 1. EMISSIVE COLOR LED / VFD SEGMENT ISOLATION (Green VFD, Red LED, Blue LED, Amber LED):
+            # Eliminates unlit physical 7-segment traces (ghost '8's) on all emissive displays.
+            # Active glowing digit strokes occupy 0.5% to 32% of the display crop.
+            mask_green = ((g - np.maximum(r, b)) > 12) & (g > 65)
+            mask_red   = ((r - np.maximum(g, b)) > 15) & (r > 65)
+            mask_blue  = ((b - np.maximum(r, g)) > 15) & (b > 65)
+            mask_amber = ((np.minimum(r, g) - b) > 15) & (np.minimum(r, g) > 65)
 
-            input_name = self.session.get_inputs()[0].name
-            preds = self.session.run(None, {input_name: tensor})[0]
+            emissive_candidates = [
+                ("green_vfd", np.count_nonzero(mask_green), mask_green),
+                ("red_led",   np.count_nonzero(mask_red),   mask_red),
+                ("blue_led",  np.count_nonzero(mask_blue),  mask_blue),
+                ("amber_led", np.count_nonzero(mask_amber), mask_amber)
+            ]
+            emissive_candidates.sort(key=lambda x: x[1], reverse=True)
 
-            preds_idx = np.argmax(preds[0], axis=-1)
-            preds_prob = np.max(preds[0], axis=-1)
+            is_emissive = False
+            for dtype, cnt, mask in emissive_candidates:
+                pct = cnt / total_px
+                if (0.005 <= pct <= 0.32) and (cnt >= 25 or (is_std and cnt >= 15)):
+                    isolated = np.zeros_like(arr)
+                    isolated[mask] = arr[mask]
+                    y_idx, x_idx = np.where(mask)
+                    pad_x, pad_y = 12, 8
+                    min_y = max(0, int(np.min(y_idx)) - pad_y)
+                    max_y = min(h, int(np.max(y_idx)) + pad_y)
+                    min_x = max(0, int(np.min(x_idx)) - pad_x)
+                    max_x = min(w, int(np.max(x_idx)) + pad_x)
+                    if (max_y - min_y) > 10 and (max_x - min_x) > 15:
+                        arr = isolated[min_y:max_y, min_x:max_x]
+                        h, w = arr.shape[:2]
+                        is_emissive = True
+                        break
 
-            chars = []
-            probs = []
-            prev = 0
-            for idx, p in zip(preds_idx, preds_prob):
-                if idx != 0 and idx != prev:
-                    if idx < len(self.char_list):
-                        chars.append(self.char_list[idx])
-                        probs.append(p)
-                prev = idx
+            # 2. INVERTED BRIGHT-ON-DARK DISPLAY (White OLED / Cyan VFD / Inverted LCD on black background)
+            if not is_emissive and gray is not None and h > 20:
+                border_px = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
+                bg_brightness = float(np.mean(border_px))
+                if bg_brightness < 50.0:
+                    bright_mask = (gray > (bg_brightness + 45)) & (gray > 70)
+                    bright_cnt = np.count_nonzero(bright_mask)
+                    bright_pct = bright_cnt / total_px
+                    if (0.005 <= bright_pct <= 0.35) and bright_cnt >= 25:
+                        isolated = np.zeros_like(arr)
+                        isolated[bright_mask] = arr[bright_mask]
+                        y_idx, x_idx = np.where(bright_mask)
+                        pad_x, pad_y = 10, 6
+                        min_y = max(0, int(np.min(y_idx)) - pad_y)
+                        max_y = min(h, int(np.max(y_idx)) + pad_y)
+                        min_x = max(0, int(np.min(x_idx)) - pad_x)
+                        max_x = min(w, int(np.max(x_idx)) + pad_x)
+                        if (max_y - min_y) > 10 and (max_x - min_x) > 15:
+                            arr = isolated[min_y:max_y, min_x:max_x]
+                            h, w = arr.shape[:2]
+                            is_emissive = True
 
-            raw_str = "".join(chars).strip()
-            # Strip non-ASCII noise glyphs (e.g. Chinese character dictionary bleed)
-            raw_str = re.sub(r'[^\x20-\x7E]+', '', raw_str).strip()
-            conf = float(np.mean(probs)) if probs else 0.0
-            return raw_str, conf
+            # 3. REFLECTIVE LCD (Black / Dark Grey digits on light background):
+            # Adaptively detect if this display has a continuous horizontal divider bar (e.g. dual-row HTC).
+            # Slices strictly above the divider only when a true continuous bar separates top and bottom rows.
+            # Single-row or large display meters are preserved without trimming.
+            if not is_emissive and not is_std and gray is not None and h > 35:
+                sub_start = int(h * 0.48)
+                sub_end = int(h * 0.94)
+                if sub_end > sub_start:
+                    row_means = np.mean(gray, axis=1)
+                    min_row = sub_start + int(np.argmin(row_means[sub_start:sub_end]))
+                    avg_above = np.mean(row_means[max(0, sub_start - 20):sub_start])
+                    
+                    line_slice = gray[min_row, :]
+                    line_dark_px = np.count_nonzero(line_slice < (avg_above - 8))
+                    is_continuous_line = (line_dark_px / float(w)) > 0.40
+                    
+                    if is_continuous_line and (row_means[min_row] < avg_above - 10):
+                        below_area = gray[min_row + 1:, :]
+                        if below_area.shape[0] >= 5 and float(np.std(below_area)) > 8.0:
+                            arr = arr[:min_row - 2, :]
+                            h, w = arr.shape[:2]
+
+            # Multi-scale inference for standard and emissive displays to maximize aspect ratio stability
+            scales = [1.0, 1.15, 1.25, 0.9] if (is_std or is_emissive) else [1.0, 1.12, 0.92]
+            best_str = ""
+            best_conf = 0.0
+
+            for sc in scales:
+                target_h = 48
+                target_w = max(48, int(np.ceil(int(target_h * (w / float(h)) * sc) / 32) * 32))
+
+                if HAS_CV2 and cv2 is not None:
+                    resized = cv2.resize(arr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                else:
+                    resized = np.array(Image.fromarray(arr).resize((target_w, target_h), Image.Resampling.BILINEAR))
+
+                if str(getattr(self, "model_version", "v4")).lower().startswith("v6"):
+                    # PP-OCRv6 ImageNet normalization
+                    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                    norm = (resized.astype(np.float32) / 255.0 - mean) / std
+                else:
+                    # PP-OCRv4 normalization
+                    norm = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
+                tensor = np.expand_dims(np.transpose(norm, (2, 0, 1)), axis=0)
+
+                input_name = self.session.get_inputs()[0].name
+                preds = self.session.run(None, {input_name: tensor})[0]
+
+                preds_idx = np.argmax(preds[0], axis=-1)
+                preds_prob = np.max(preds[0], axis=-1)
+
+                chars = []
+                probs = []
+                prev = 0
+                for idx, p in zip(preds_idx, preds_prob):
+                    if idx != 0 and idx != prev:
+                        if idx < len(self.char_list):
+                            chars.append(self.char_list[idx])
+                            probs.append(p)
+                    prev = idx
+
+                raw_str = "".join(chars).strip()
+                # Strip non-ASCII noise glyphs (e.g. Chinese character dictionary bleed)
+                raw_str = re.sub(r'[^\x20-\x7E]+', '', raw_str).strip()
+                conf = float(np.mean(probs)) if probs else 0.0
+
+                if is_std and len(raw_str.replace(".", "")) >= 5:
+                    return raw_str, conf
+                if conf > best_conf:
+                    best_str = raw_str
+                    best_conf = conf
+
+            return best_str, best_conf
         except Exception as e:
             logger.error("[ONNX AI OCR] Recognition inference error: %s", e)
             return "", 0.0
 
-    def detect_text_blobs(self, img_arr: np.ndarray, min_prob: float = 0.35) -> List[Tuple[float, float, float, float]]:
+    def detect_text_blobs(self, img_arr: np.ndarray, min_prob: float = 0.12) -> List[Tuple[float, float, float, float]]:
         """
         Uses DBNet text detector to find normalized bounding boxes (x, y, w, h) of text in an image.
+        Uses min_prob=0.12 and min_count=30 to reliably capture tilted and glare-affected displays.
         """
         if not self._initialized:
             self.initialize()
@@ -320,7 +408,7 @@ class OnnxOcrEngine:
                             coords.remove((ny, nx))
                             visited[ny, nx] = True
                             queue.append((ny, nx))
-                if count > 100:
+                if count >= 30:
                     blobs.append((float(min_x / det_w), float(min_y / det_h), float((max_x - min_x) / det_w), float((max_y - min_y) / det_h)))
             return blobs
         except Exception as ex:
@@ -356,12 +444,27 @@ def verify_is_digital_display(cv_crop: Any) -> Tuple[bool, float, str]:
 
     gray = cv2.cvtColor(cv_crop, cv2.COLOR_BGR2GRAY)
 
-    # 1. Check for Green VFD / LED display (e.g. Fluke 1502A standard thermometer)
+    # 1. Check for Emissive LED / VFD display (Green VFD, Red LED, Blue LED, Amber LED)
     b, g, r = cv2.split(cv_crop)
     g_diff = cv2.subtract(g, cv2.max(r, b))
+    r_diff = cv2.subtract(r, cv2.max(g, b))
+    b_diff = cv2.subtract(b, cv2.max(r, g))
+    y_diff = cv2.subtract(cv2.min(r, g), b)
+
     green_count = int(np.count_nonzero(g_diff > 20))
-    if green_count >= max(35, int(w * h * 0.002)):
+    red_count   = int(np.count_nonzero(r_diff > 20))
+    blue_count  = int(np.count_nonzero(b_diff > 20))
+    amber_count = int(np.count_nonzero(y_diff > 20))
+
+    min_emissive = max(30, int(w * h * 0.002))
+    if green_count >= min_emissive:
         return True, 0.98, "Green VFD/LED digital display detected"
+    if red_count >= min_emissive:
+        return True, 0.98, "Red LED digital display detected"
+    if blue_count >= min_emissive and (blue_count / float(w * h)) <= 0.35:
+        return True, 0.98, "Blue LED/OLED digital display detected"
+    if amber_count >= min_emissive:
+        return True, 0.98, "Amber/Yellow LED digital display detected"
 
     # 2. Check for standard 7-segment / numeric LCD display
     # Sharp horizontal and vertical segment edge energy
@@ -521,44 +624,87 @@ def detect_thermometers_in_image(img_input: Any) -> Dict[str, Any]:
 
     result_boxes = []
 
-    # 1. Detect Standard Instrument (Fluke 1502A) in Device Slot
+    # 1. Detect Standard Instrument (Fluke 1502A / Red LED / Blue LED / Black LCD) in Device Slot
     if device_arr is not None:
         r = device_arr[:, :, 0].astype(int)
         g = device_arr[:, :, 1].astype(int)
         b = device_arr[:, :, 2].astype(int)
+
         green_lit = (g > 95) & (g > r + 20) & (g > b + 20)
-        ys, xs = np.where(green_lit)
-        # Isolate main VFD digit panel (filter out incidental top status LEDs at y < 0.25)
-        valid_vfd = ys >= int(0.22 * slot_h)
-        if np.count_nonzero(valid_vfd) > 60:
-            ys_vfd, xs_vfd = ys[valid_vfd], xs[valid_vfd]
-            min_x, max_x = int(np.min(xs_vfd)), int(np.max(xs_vfd))
-            min_y, max_y = int(np.min(ys_vfd)), int(np.max(ys_vfd))
-            pad_w = int((max_x - min_x) * 0.05)
-            pad_h = int((max_y - min_y) * 0.12)
-            bx = max(0, min_x - pad_w)
-            by = max(0, min_y - pad_h)
-            bw = min(slot_w - bx, (max_x - min_x) + pad_w * 2)
-            bh = min(slot_h - by, (max_y - min_y) + pad_h * 2)
-            nx = round(bx / slot_w, 4)
-            ny = round(by / slot_h, 4)
-            nw = round(bw / slot_w, 4)
-            nh = round(bh / slot_h, 4)
-            result_boxes.append({
-                "id": "box_standard",
-                "label": "Standard (Fluke 1502A)",
-                "camera_type": "device",
-                "target": "device",
-                "mode": "quad",
-                "x": nx, "y": ny, "w": nw, "h": nh, "width": nw, "height": nh,
-                "points": [
-                    [nx, ny],
-                    [round(nx + nw, 4), ny],
-                    [round(nx + nw, 4), round(ny + nh, 4)],
-                    [nx, round(ny + nh, 4)]
-                ],
-                "status": "candidate"
-            })
+        red_lit   = (r > 95) & (r > g + 20) & (r > b + 20)
+        blue_lit  = (b > 95) & (b > r + 20) & (b > g + 20)
+        amber_lit = (r > 95) & (g > 95) & (r > b + 20)
+
+        color_candidates = [
+            ("Standard (Fluke 1502A)", green_lit),
+            ("Standard (Red LED)", red_lit),
+            ("Standard (Blue LED)", blue_lit),
+            ("Standard (Amber LED)", amber_lit),
+        ]
+
+        found_std = False
+        for c_label, c_mask in color_candidates:
+            ys, xs = np.where(c_mask)
+            valid_pts = ys >= int(0.20 * slot_h)
+            if np.count_nonzero(valid_pts) > 40:
+                ys_v, xs_v = ys[valid_pts], xs[valid_pts]
+                min_x, max_x = int(np.min(xs_v)), int(np.max(xs_v))
+                min_y, max_y = int(np.min(ys_v)), int(np.max(ys_v))
+                pad_w = int((max_x - min_x) * 0.05)
+                pad_h = int((max_y - min_y) * 0.12)
+                bx = max(0, min_x - pad_w)
+                by = max(0, min_y - pad_h)
+                bw = min(slot_w - bx, (max_x - min_x) + pad_w * 2)
+                bh = min(slot_h - by, (max_y - min_y) + pad_h * 2)
+                nx = round(bx / slot_w, 4)
+                ny = round(by / slot_h, 4)
+                nw = round(bw / slot_w, 4)
+                nh = round(bh / slot_h, 4)
+                result_boxes.append({
+                    "id": "box_standard",
+                    "label": c_label,
+                    "camera_type": "device",
+                    "target": "device",
+                    "mode": "quad",
+                    "x": nx, "y": ny, "w": nw, "h": nh, "width": nw, "height": nh,
+                    "points": [
+                        [nx, ny],
+                        [round(nx + nw, 4), ny],
+                        [round(nx + nw, 4), round(ny + nh, 4)],
+                        [nx, round(ny + nh, 4)]
+                    ],
+                    "status": "candidate"
+                })
+                found_std = True
+                break
+
+        # If not emissive LED/VFD, check for digital text / LCD in device slot
+        if not found_std and onnx_ocr_engine:
+            dev_blobs = onnx_ocr_engine.detect_text_blobs(device_arr)
+            if dev_blobs:
+                best_b = max(dev_blobs, key=lambda b: b[2] * b[3])
+                bx, by, bw, bh = best_b
+                pad_x = max(0.02, bw * 0.1)
+                pad_y = max(0.015, bh * 0.15)
+                nx = round(max(0.0, bx - pad_x), 4)
+                ny = round(max(0.0, by - pad_y), 4)
+                nw = round(min(1.0 - nx, bw + pad_x * 2), 4)
+                nh = round(min(1.0 - ny, bh + pad_y * 2), 4)
+                result_boxes.append({
+                    "id": "box_standard",
+                    "label": "Standard (LCD)",
+                    "camera_type": "device",
+                    "target": "device",
+                    "mode": "quad",
+                    "x": nx, "y": ny, "w": nw, "h": nh, "width": nw, "height": nh,
+                    "points": [
+                        [nx, ny],
+                        [round(nx + nw, 4), ny],
+                        [round(nx + nw, 4), round(ny + nh, 4)],
+                        [nx, round(ny + nh, 4)]
+                    ],
+                    "status": "candidate"
+                })
 
     # 2. Detect Sensors in Chamber Slot via PP-OCRv4 AI text detection
     det_blobs = onnx_ocr_engine.detect_text_blobs(chamber_arr) if onnx_ocr_engine else []
@@ -590,11 +736,13 @@ def detect_thermometers_in_image(img_input: Any) -> Dict[str, Any]:
             cl_w = cl["max_x"] - cl["min_x"]
             cl_h = cl["max_y"] - cl["min_y"]
             
-            # Frame the temperature readout line on the digital display
-            disp_w = 0.150
-            disp_h = 0.082
-            disp_x = max(0.0, cl["cx"] - 0.075)
-            disp_y = max(0.0, cl["min_y"] + 0.026 if cl_h > 0.15 else 0.520)
+            # Adaptively frame digital displays of any scale (large benchtop displays down to compact mini probes)
+            pad_w = max(0.012, cl_w * 0.14)
+            pad_h = max(0.012, cl_h * 0.22)
+            disp_w = max(0.09, min(0.70, cl_w + pad_w * 2))
+            disp_h = max(0.05, min(0.45, cl_h + pad_h * 2))
+            disp_x = max(0.0, min(1.0 - disp_w, cl["min_x"] - pad_w))
+            disp_y = max(0.0, min(1.0 - disp_h, cl["min_y"] - pad_h * 0.7))
             if disp_y + disp_h > 0.98:
                 disp_y = max(0.0, 0.98 - disp_h)
             
@@ -997,23 +1145,38 @@ def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image, box: Option
     b, g, r = cv2.split(cv_crop)
     total_px = float(w * h)
 
-    # 1. Green VFD / LED Readout (Fluke 1502A Standard Thermometer)
+    # 1. Emissive LED / VFD Readouts (Green VFD, Red LED, Blue LED, Amber LED)
     g_diff = cv2.subtract(g, cv2.max(r, b))
-    green_count = int(np.count_nonzero(g_diff > 20))
-    is_vfd = (
-        green_count >= max(35, int(total_px * 0.002))
-        or (is_device_cam and green_count >= 20)
-    )
+    r_diff = cv2.subtract(r, cv2.max(g, b))
+    b_diff = cv2.subtract(b, cv2.max(r, g))
+    y_diff = cv2.subtract(cv2.min(r, g), b)
 
-    if is_vfd:
-        # Isolate luminous green segments
-        _, thresh = cv2.threshold(g_diff, 18, 255, cv2.THRESH_BINARY)
-        _, g_min = cv2.threshold(g, 125, 255, cv2.THRESH_BINARY)
-        thresh = cv2.bitwise_and(thresh, g_min)
+    g_cnt = int(np.count_nonzero(g_diff > 20))
+    r_cnt = int(np.count_nonzero(r_diff > 20))
+    b_cnt = int(np.count_nonzero(b_diff > 20))
+    y_cnt = int(np.count_nonzero(y_diff > 20))
+
+    emissive_candidates = [
+        ("green_vfd", g_cnt, g_diff, g),
+        ("red_led",   r_cnt, r_diff, r),
+        ("blue_led",  b_cnt, b_diff, b),
+        ("amber_led", y_cnt, y_diff, cv2.min(r, g))
+    ]
+    emissive_candidates.sort(key=lambda x: x[1], reverse=True)
+    best_em_name, best_em_cnt, best_em_diff, best_em_chan = emissive_candidates[0]
+
+    min_em_cnt = 20 if is_device_cam else 35
+    is_emissive = best_em_cnt >= min_em_cnt and (best_em_cnt / total_px) <= 0.35
+
+    if is_emissive:
+        # Isolate luminous segments
+        _, thresh1 = cv2.threshold(best_em_diff, 16, 255, cv2.THRESH_BINARY)
+        _, thresh2 = cv2.threshold(best_em_chan, 80, 255, cv2.THRESH_BINARY)
+        thresh = cv2.bitwise_and(thresh1, thresh2)
 
         # Auto-crop to active glowing digit bounding box to eliminate buttons, logos, and bezel
         pts = cv2.findNonZero(thresh)
-        if pts is not None and len(pts) >= 40:
+        if pts is not None and len(pts) >= 30:
             bx, by, bw, bh = cv2.boundingRect(pts)
             pad_x = 16
             pad_y = 12
@@ -1033,10 +1196,8 @@ def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image, box: Option
 
         # Invert: Black text on pure white background
         inverted = cv2.bitwise_not(reinforced)
-
-        # Add 20px white margin so edge digits are never cut off by Tesseract character boundary finder
         padded = cv2.copyMakeBorder(inverted, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255, 255, 255])
-        return Image.fromarray(padded), "green_vfd"
+        return Image.fromarray(padded), best_em_name
 
     # 2. Standard 7-Segment LCD Display (HTC-1 / HTC-2 Black on Grey LCD)
     gray = cv2.cvtColor(cv_crop, cv2.COLOR_BGR2GRAY)
@@ -1064,7 +1225,13 @@ def preprocess_for_7segment_ocr(cv_crop: Any, pil_crop: Image.Image, box: Option
 def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -> Optional[float]:
     """
     Parses numeric calibration temperatures and fixes common 7-segment character ambiguities.
-    Supports high precision 3-decimal readouts from standard thermometers (e.g. 20.953 from Fluke 1502A).
+    Supports:
+    - High precision 3-decimal readouts from standard thermometers (e.g. 21.203 from Fluke 1502A).
+    - 2-decimal precision thermometers (e.g. 24.55 from precision benchtop/probes).
+    - 1-decimal chamber thermometers (e.g. 23.9, 23.0 with degree symbol handling).
+    - Integer temperature or humidity readouts (e.g. 25, 50).
+    - Negative sub-zero temperatures (e.g. -5.2, -10.5).
+    - Explicit precision configuration via box['decimals'] (0, 1, 2, 3).
     """
     if not text:
         return None
@@ -1072,30 +1239,43 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
     cam_type = (box.get("camera_type") or box.get("target") or "").lower() if box else ""
     lbl = str(box.get("label", "")).lower() if box else ""
     is_standard = (cam_type == "device" or "standard" in lbl or "fluke" in lbl or "1502" in lbl)
+    is_htc = ("htc" in lbl or "htc-1" in lbl or "htc-2" in lbl)
 
     # 1. Normalize spaces around dots: '20 . 953' -> '20.953'
     t = re.sub(r'(\d+)\s*\.\s*(\d+)', r'\1.\2', text)
-    # 1b. Fix space-split digits before/after dot: '2 5.34' -> '25.34', '2 5.3' -> '25.3', '25.3 4' -> '25.34'
+    # Fix space-split digits before/after dot: '2 5.34' -> '25.34', '2 5.3' -> '25.3', '25.3 4' -> '25.34'
     t = re.sub(r'(\d+\.\d+)\s+(\d+)', r'\1\2', t)
     t = re.sub(r'\b(\d)\s+(\d\.\d+)\b', r'\1\2', t)
     t = re.sub(r'\b(\d)\s+(\d)\s+(\d)\b', r'\1\2.\3', t)
-    # 2. Spaces between digits when dot was omitted: '20 953' -> '20.953'
+    # Spaces between digits when dot was omitted: '20 953' -> '20.953'
     t = re.sub(r'(\b\d{1,2})\s+(\d{2,4}\b)', r'\1.\2', t)
-    # 3. Replace comma with dot
+    # Replace comma with dot
     t = t.replace(",", ".")
-    # 4. Clean 7-segment letter confusions
+    # Clean 7-segment letter confusions
     t = t.replace("O", "0").replace("o", "0")
     t = t.replace("S", "5").replace("s", "5")
     t = t.replace("B", "8")
     t = t.replace("l", "1").replace("I", "1").replace("|", "1")
     t = t.replace("Z", "2").replace("z", "2")
 
-    # A. Prioritized 3-decimal standard thermometer format (e.g. 20.953 from Fluke 1502A)
+    # User configured decimals if specified
+    user_dec = box.get("decimals") if box else None
+    if user_dec is not None:
+        try:
+            ud = int(user_dec)
+            m_ud = re.search(r'([-+]?\d{1,3}(?:\.\d+)?)\b', t)
+            if m_ud:
+                val = float(m_ud.group(1))
+                if -50.0 <= val <= 250.0:
+                    return round(val, ud) if ud > 0 else int(round(val))
+        except (ValueError, TypeError):
+            pass
+
+    # A. Prioritized 3-decimal standard thermometer format (e.g. 21.203 from Fluke 1502A)
     if is_standard:
-        # Match standard 3-decimal pattern: e.g. 20.953 in '20.95380', '20.953 C', '20.947'
-        m3 = re.search(r'[-+]?\b(\d{1,3}\.\d{3})\b', t)
+        m3 = re.search(r'(?:^|[^\d])([-+]?\d{1,3}\.\d{3})\b', t)
         if not m3:
-            m3 = re.search(r'[-+]?(\d{1,2}\.\d{3})', t)
+            m3 = re.search(r'(?:^|[^\d])([-+]?\d{1,2}\.\d{3})', t)
         if m3:
             try:
                 val = float(m3.group(1))
@@ -1116,7 +1296,6 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
             except ValueError:
                 pass
 
-        # Match 4 digits: e.g. '2095' -> 20.95
         m4 = re.search(r'\b(\d{4})\b', t)
         if m4:
             try:
@@ -1126,22 +1305,45 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
             except ValueError:
                 pass
 
-    # B. For chamber thermometers (HTC-2, HTC-1, LCD displays):
+    # B. Explicit HTC or single-decimal display:
     # HTC sensors physically have 1-decimal resolution (e.g. 24.0°C).
     # The degree symbol (°C) touching the last digit is frequently read as an extra digit (e.g. '24.02', '24.07', '24.04', '25.77').
-    if not is_standard:
-        m_deg = re.search(r'[-+]?\b(\d{1,2}\.\d)\d\b', t)
-        if m_deg:
+    is_2dec = ("2dec" in lbl or "precision" in lbl or (box and box.get("decimals") == 2))
+    has_deg_unit = bool(re.search(r'[Cc\u00b0\u00ba\u2103]', text))
+    if not is_standard and not is_2dec:
+        if is_htc or (has_deg_unit and (re.search(r'[-+]?\d{1,2}\.[09][124789]', t) or not re.search(r'[-+]?\d{1,2}\.\d{2}', t))):
+            m_deg = re.search(r'(?:^|[^\d])([-+]?\d{1,2}\.\d)\d?(?:[^\d]|$)', t)
+            if m_deg:
+                try:
+                    val = float(m_deg.group(1))
+                    if -50.0 <= val <= 250.0:
+                        return round(val, 1)
+                except ValueError:
+                    pass
+
+    # C. Standard 1-decimal or 2-decimal temperature matching (supports both large and small displays)
+    m2 = re.search(r'(?:^|[^\d])([-+]?\d{1,3}\.\d{2})\b', t)
+    m1 = re.search(r'(?:^|[^\d])([-+]?\d{1,3}\.\d)\b', t)
+
+    if m2 and not is_standard:
+        # Check if this matches typical HTC degree artifact: e.g. 23.01, 23.02, 23.04, 23.92, 23.97, 24.01
+        m_htc_art = re.search(r'(?:^|[^\d])([-+]?\d{1,2}\.[09])[124789]\b', t)
+        if m_htc_art and not is_2dec:
             try:
-                val = float(m_deg.group(1))
+                val = float(m_htc_art.group(1))
                 if -50.0 <= val <= 250.0:
                     return round(val, 1)
             except ValueError:
                 pass
+        
+        try:
+            val = float(m2.group(1))
+            if -50.0 <= val <= 250.0:
+                return round(val, 2)
+        except ValueError:
+            pass
 
-    # Look for standard 1-decimal temperature: e.g. 24.0, 25.1
-    m1 = re.search(r'[-+]?\b(\d{1,2}\.\d)\b', t)
-    if m1:
+    if m1 and not is_standard:
         try:
             val = float(m1.group(1))
             if -50.0 <= val <= 250.0:
@@ -1149,8 +1351,17 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
         except ValueError:
             pass
 
-    # For chamber thermometers: 3 digits without visible dot (e.g. '250' -> 25.0, '254' -> 25.4, '240' -> 24.0)
+    # D. Chamber thermometers: 3 or 4 digits without visible dot (e.g. '250' -> 25.0, '254' -> 25.4, '240' -> 24.0)
     if not is_standard:
+        m4_deg = re.search(r'\b(\d{2})(\d)[29086]\b', t)
+        if m4_deg:
+            try:
+                val = float(f"{m4_deg.group(1)}.{m4_deg.group(2)}")
+                if 0.0 <= val <= 99.9:
+                    return round(val, 1)
+            except ValueError:
+                pass
+
         m3_int = re.search(r'\b(\d{3})\b', t)
         if m3_int:
             try:
@@ -1160,7 +1371,7 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
             except ValueError:
                 pass
 
-    # C. Floating point numbers with decimal point (e.g. 20.953, 20.5, -5.2, 100.0)
+    # E. General Floating point numbers with decimal point (e.g. -5.2, 100.0, 20.953)
     matches = re.findall(r"[-+]?\d{1,3}\.\d{1,4}", t)
     for m in matches:
         try:
@@ -1170,13 +1381,12 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
         except ValueError:
             continue
 
-    # D. Standard integer fallback (e.g. '20')
+    # F. Standard integer fallback (e.g. '20', '25', '100')
     int_matches = re.findall(r"[-+]?\d{1,3}", t)
     sorted_ints = sorted(int_matches, key=lambda x: len(x.lstrip('-+')), reverse=True)
     for m in sorted_ints:
         try:
             val = float(m)
-            # Avoid picking spurious single digit like '2' for chamber thermometer displays
             if not is_standard and len(m.lstrip('-+')) == 1 and val < 10.0:
                 continue
             if -50.0 <= val <= 250.0:
@@ -1219,16 +1429,38 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
         if onnx_text:
             onnx_val = extract_thermometer_value(onnx_text, box=box)
 
-        # If raw crop did not yield a valid number, attempt green VFD segment isolation as fallback
+        # Multi-color emissive and adaptive contrast fallback if raw crop recognition was unconfident or missing value
         if (onnx_val is None or onnx_conf < 0.45) and crop_arr is not None and len(crop_arr.shape) == 3:
             r_c = crop_arr[:, :, 0].astype(int)
             g_c = crop_arr[:, :, 1].astype(int)
             b_c = crop_arr[:, :, 2].astype(int)
-            green_lit = (g_c > 110) & (g_c > r_c + 15) & (g_c > b_c + 15)
-            if np.count_nonzero(green_lit) > 80:
-                clean = np.where(green_lit, 0, 255).astype(np.uint8)
-                fallback_target = Image.fromarray(np.stack([clean] * 3, axis=-1))
-                alt_text, alt_conf = onnx_ocr_engine.recognize(fallback_target, box=box)
+            tot_crop_px = float(crop_arr.shape[0] * crop_arr.shape[1])
+
+            color_candidates = [
+                ("green", ((g_c > 75) & (g_c > r_c + 12) & (g_c > b_c + 12))),
+                ("red",   ((r_c > 75) & (r_c > g_c + 12) & (r_c > b_c + 12))),
+                ("blue",  ((b_c > 75) & (b_c > r_c + 12) & (b_c > g_c + 12))),
+                ("amber", ((np.minimum(r_c, g_c) > 75) & (np.minimum(r_c, g_c) > b_c + 12)))
+            ]
+            for c_name, c_mask in color_candidates:
+                c_cnt = np.count_nonzero(c_mask)
+                if (0.005 <= (c_cnt / tot_crop_px) <= 0.35) and c_cnt >= 20:
+                    clean = np.where(c_mask, 0, 255).astype(np.uint8)
+                    fallback_target = Image.fromarray(np.stack([clean] * 3, axis=-1))
+                    alt_text, alt_conf = onnx_ocr_engine.recognize(fallback_target, box=box)
+                    alt_val = extract_thermometer_value(alt_text, box=box) if alt_text else None
+                    if alt_val is not None and (onnx_val is None or alt_conf > onnx_conf):
+                        onnx_text, onnx_conf, onnx_val = alt_text, alt_conf, alt_val
+                        break
+
+            # If still missing value on reflective LCD, attempt CLAHE + Otsu adaptive binarization
+            if onnx_val is None and HAS_CV2 and cv2 is not None:
+                gray_c = cv2.cvtColor(crop_arr, cv2.COLOR_RGB2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.8, tileGridSize=(6, 6))
+                eq_c = clahe.apply(gray_c)
+                _, otsu_c = cv2.threshold(eq_c, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                otsu_target = Image.fromarray(np.stack([otsu_c] * 3, axis=-1))
+                alt_text, alt_conf = onnx_ocr_engine.recognize(otsu_target, box=box)
                 alt_val = extract_thermometer_value(alt_text, box=box) if alt_text else None
                 if alt_val is not None and (onnx_val is None or alt_conf > onnx_conf):
                     onnx_text, onnx_conf, onnx_val = alt_text, alt_conf, alt_val
