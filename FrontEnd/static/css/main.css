@@ -607,30 +607,38 @@ body {
         top: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
+        left: auto !important;
         width: 88vw !important;
         max-width: 380px !important;
         height: 100vh !important;
         height: 100dvh !important;
         max-height: 100dvh !important;
-        z-index: 1200 !important;
-        /* Above backdrop (1000) and header (100) */
+        z-index: 2500 !important;
+        /* Above backdrop (2400), floating toolbar, and header (100) */
         background: #0b0f19 !important;
-        /* Solid high-contrast dark background - ZERO blur */
+        /* Solid high-contrast dark background - ZERO blur for iOS WebKit touch reliability */
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
         border-left: 1px solid rgba(16, 185, 129, 0.4) !important;
         border-radius: 0 !important;
         box-shadow: -15px 0 50px rgba(0, 0, 0, 0.95) !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
         -webkit-overflow-scrolling: touch !important;
-        transform: translateX(105%) !important;
-        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        overscroll-behavior: contain !important;
+        touch-action: pan-y !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        transform: translate3d(105%, 0, 0) !important;
+        transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.28s !important;
         margin: 0 !important;
-        padding: 1rem !important;
+        padding: 1rem 1rem max(2.5rem, env(safe-area-inset-bottom, 2.5rem)) 1rem !important;
     }
 
     .lights-panel.mobile-open {
-        transform: translateX(0) !important;
+        transform: translate3d(0, 0, 0) !important;
+        pointer-events: auto !important;
+        visibility: visible !important;
     }
 
     /* Mobile Drawer Internal System Stats Strip */
@@ -761,18 +769,20 @@ body {
         display: block !important;
         position: fixed !important;
         inset: 0 !important;
-        background: rgba(0, 0, 0, 0.35) !important;
+        background: rgba(0, 0, 0, 0.5) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
-        z-index: 1000 !important;
-        /* Below lights-panel (1200) */
+        z-index: 2400 !important;
+        /* Below lights-panel (2500) */
         opacity: 0 !important;
+        visibility: hidden !important;
         pointer-events: none !important;
-        transition: opacity 0.25s ease !important;
+        transition: opacity 0.25s ease, visibility 0.25s ease !important;
     }
 
     .mobile-drawer-backdrop.active {
         opacity: 1 !important;
+        visibility: visible !important;
         pointer-events: auto !important;
     }
 }
@@ -1483,18 +1493,21 @@ input[type="number"] {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
+    height: 8px;
+    background: rgba(255, 255, 255, 0.14);
     border-radius: var(--radius-full);
     outline: none;
     margin: 6px 0;
+    cursor: pointer;
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .slider-custom::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--neon-cyan);
     cursor: pointer;
@@ -1502,8 +1515,35 @@ input[type="number"] {
     transition: transform 0.1s ease;
 }
 
+.slider-custom::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: var(--neon-cyan);
+    cursor: pointer;
+    box-shadow: 0 0 10px var(--neon-cyan);
+}
+
 .slider-custom::-webkit-slider-thumb:hover {
     transform: scale(1.15);
+}
+
+@media (pointer: coarse), (max-width: 1024px) {
+    .slider-custom {
+        height: 10px;
+        margin: 10px 0;
+    }
+
+    .slider-custom::-webkit-slider-thumb {
+        width: 24px;
+        height: 24px;
+    }
+
+    .slider-custom::-moz-range-thumb {
+        width: 24px;
+        height: 24px;
+    }
 }
 
 /* LED Studio Master Card & Illuminated Line Bulb Button */
@@ -1513,12 +1553,11 @@ input[type="number"] {
     justify-content: space-between;
     gap: 1rem;
     padding: 1.15rem 1.35rem;
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 15, 26, 0.95) 100%);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(10, 15, 26, 0.98) 100%);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-lg);
     margin-bottom: 1.25rem;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-    backdrop-filter: blur(12px);
 }
 
 .led-master-meta {
@@ -1546,14 +1585,18 @@ input[type="number"] {
     align-items: center;
     gap: 14px;
     padding: 0.55rem 1.15rem 0.55rem 0.75rem;
-    background: rgba(17, 24, 39, 0.9);
-    border: 1.5px solid rgba(255, 255, 255, 0.12);
+    background: rgba(17, 24, 39, 0.95);
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
     border-radius: 9999px;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 0.2s ease, border-color 0.25s ease, box-shadow 0.25s ease;
     user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     outline: none;
     overflow: visible;
+    z-index: 2;
 }
 
 .btn-led-bulb:hover {
@@ -2281,30 +2324,45 @@ input[type="number"] {
 
 /* Mobile & Portrait Screens: Right-Side Drawer (Wider for Sliders, Smaller Badges, 4x2 Toolbar Grid) */
 @media (max-width: 1024px),
-(orientation: portrait) {
+(orientation: portrait),
+(max-height: 540px) {
     .camera-settings-overlay {
+        position: fixed !important;
         top: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
         left: auto !important;
-        width: 86% !important;
-        /* Wider on mobile so zoom, pan, tilt sliders fit comfortably */
+        width: 88vw !important;
+        /* Full-height drawer on iOS/mobile so sliders & tabs are never clipped inside 16:9 viewport */
         min-width: 280px !important;
-        max-width: 380px !important;
-        height: 100% !important;
-        border-left: 1px solid rgba(0, 242, 254, 0.4) !important;
+        max-width: 400px !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        z-index: 2450 !important;
+        border-left: 1px solid rgba(0, 242, 254, 0.45) !important;
         border-top: none !important;
-        transform: translateX(100%) !important;
-        box-shadow: -15px 0 35px rgba(0, 0, 0, 0.85) !important;
-        background: rgba(8, 13, 24, 0.75) !important;
-        backdrop-filter: blur(4px) !important;
-        -webkit-backdrop-filter: blur(4px) !important;
+        transform: translate3d(105%, 0, 0) !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+        box-shadow: -15px 0 45px rgba(0, 0, 0, 0.92) !important;
+        background: #0b0f19 !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
     }
 
     .camera-settings-overlay.open {
-        transform: translateX(0) !important;
+        transform: translate3d(0, 0, 0) !important;
         opacity: 1 !important;
+        visibility: visible !important;
         pointer-events: auto !important;
+    }
+
+    .camera-settings-overlay .cam-overlay-body {
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior: contain !important;
+        touch-action: pan-y !important;
+        padding-bottom: max(2rem, env(safe-area-inset-bottom, 2rem)) !important;
     }
 
     /* Smaller camera name, FPS and settings button on mobile */
@@ -3879,61 +3937,110 @@ input[type="number"] {
    and 100px Gaussian filters while preserving sleek cyberpunk dark aesthetic.
    ========================================================================= */
 
-html.lite-fx .ambient-sphere,
+html.lite-fx .ambient-sphere {
+    display: none !important;
+}
+
 @supports (-moz-appearance: none) {
     .ambient-sphere {
         display: none !important;
     }
 }
 
-html.lite-fx .glass-panel,
+html.lite-fx .glass-panel {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(16, 23, 38, 0.96) !important;
+    box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.5) !important;
+}
+
 @supports (-moz-appearance: none) {
     .glass-panel {
-        backdrop-filter: blur(4px) !important;
-        -webkit-backdrop-filter: blur(4px) !important;
-        background: rgba(16, 23, 38, 0.94) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(16, 23, 38, 0.96) !important;
         box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.5) !important;
     }
 }
 
-html.lite-fx .app-header,
+html.lite-fx .app-header {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(10, 15, 26, 0.98) !important;
+}
+
 @supports (-moz-appearance: none) {
     .app-header {
-        backdrop-filter: blur(6px) !important;
-        -webkit-backdrop-filter: blur(6px) !important;
-        background: rgba(10, 15, 26, 0.96) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(10, 15, 26, 0.98) !important;
     }
 }
 
 html.lite-fx .modal-card,
 html.lite-fx .ocr-config-card,
 html.lite-fx .device-camera-dialog,
-html.lite-fx .ocr-auth-card,
+html.lite-fx .ocr-auth-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: #0f172a !important;
+}
+
 @supports (-moz-appearance: none) {
     .modal-card,
     .ocr-config-card,
     .device-camera-dialog,
     .ocr-auth-card {
-        backdrop-filter: blur(4px) !important;
-        -webkit-backdrop-filter: blur(4px) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
         background: #0f172a !important;
     }
 }
 
+/* iOS / iPhone CSS Fullscreen Fallback for Camera Cards (since WebKit blocks requestFullscreen on div) */
+.viewport-card.ios-fullscreen-card {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    aspect-ratio: auto !important;
+    z-index: 9500 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: #000000 !important;
+    margin: 0 !important;
+}
+
 /* Mobile & Touch Layout Performance Tuning */
-@media (max-width: 1024px) {
+@media (max-width: 1024px), (orientation: portrait), (max-height: 540px) {
     .ambient-sphere {
         display: none !important;
     }
     .glass-panel {
-        backdrop-filter: blur(4px) !important;
-        -webkit-backdrop-filter: blur(4px) !important;
-        background: rgba(16, 23, 38, 0.94) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(16, 23, 38, 0.96) !important;
         box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.5) !important;
     }
+    .lights-panel {
+        background: #0b0f19 !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
     .app-header {
-        backdrop-filter: blur(6px) !important;
-        -webkit-backdrop-filter: blur(6px) !important;
-        background: rgba(10, 15, 26, 0.96) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(10, 15, 26, 0.98) !important;
+    }
+    .btn-preset,
+    .btn-led-bulb,
+    .select-custom,
+    .input-custom,
+    .rgb-input-number,
+    .btn-icon {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
     }
 }

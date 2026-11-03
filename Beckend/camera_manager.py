@@ -75,6 +75,9 @@ class CameraManager:
         # Cached controls & supported controls per device
         self.controls_cache = {}
         self.supported_ctrls = {}
+        self.full_controls_cache = {}
+        self.full_controls_time = {}
+        self.resolutions_cache = {}
         
         # Discover and initialize
         self.discover_cameras()
@@ -92,10 +95,13 @@ class CameraManager:
         except Exception:
             return False
 
-    def _get_supported_resolutions(self, dev_path: str) -> list[str]:
+    def _get_supported_resolutions(self, dev_path: str, use_cache: bool = True) -> list[str]:
         """Query supported discrete video capture frame sizes directly from connected camera via v4l2-ctl."""
         if not dev_path or dev_path.startswith("/dev/null") or "virtual" in dev_path:
             return ["1920x1080", "1280x720", "640x480"]
+
+        if use_cache and dev_path in self.resolutions_cache:
+            return self.resolutions_cache[dev_path]
 
         resolutions = set()
         # Query discrete resolutions for MJPEG streaming format first
@@ -149,7 +155,9 @@ class CameraManager:
 
         # Sort descending by pixel count (area) then width
         sorted_res = sorted(resolutions, key=lambda item: (item[0] * item[1], item[0]), reverse=True)
-        return [f"{w}x{h}" for w, h in sorted_res]
+        res_list = [f"{w}x{h}" for w, h in sorted_res]
+        self.resolutions_cache[dev_path] = res_list
+        return res_list
 
     def discover_cameras(self) -> list[dict]:
         """Scan for connected USB webcams and CSI cameras."""
@@ -260,6 +268,11 @@ class CameraManager:
             }
 
         dev_path = f"/dev/{target_id}" if not target_id.startswith("/") else target_id
+        now = time.time()
+        cached_ctrls = self.full_controls_cache.get(target_id)
+        if cached_ctrls and (now - self.full_controls_time.get(target_id, 0) < 10.0):
+            return cached_ctrls
+
         controls = {}
         with self.ctrl_lock:
             try:
@@ -281,8 +294,12 @@ class CameraManager:
                                     attrs[k] = v
                         controls[ctrl_name] = attrs
                 self.supported_ctrls[target_id] = supported
+                self.full_controls_cache[target_id] = controls
+                self.full_controls_time[target_id] = now
             except Exception as e:
                 logger.warning("Error reading v4l2 controls for %s: %s", dev_path, e)
+                if cached_ctrls:
+                    return cached_ctrls
 
         return controls
 
@@ -319,6 +336,8 @@ class CameraManager:
                 res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0)
                 if res.returncode == 0:
                     self.controls_cache[v4l_ctrl] = val
+                    if target_id in self.full_controls_cache and v4l_ctrl in self.full_controls_cache[target_id]:
+                        self.full_controls_cache[target_id][v4l_ctrl]["value"] = val
                     logger.info("Set V4L2 control %s=%s on %s", v4l_ctrl, val, dev_path)
                     return True
                 else:
@@ -342,6 +361,7 @@ class CameraManager:
                         subprocess.run(["v4l2-ctl", "-d", dev_path, f"--set-ctrl={name}={data['default']}"],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0)
             logger.info("Reset camera controls to defaults for %s", dev_path)
+            self.full_controls_time.pop(target_id, None)
             # Also restore resolution & fps to environment defaults
             def_res = os.environ.get("DEFAULT_RESOLUTION", "1920x1080")
             try:
@@ -360,18 +380,32 @@ class CameraManager:
     def select_camera(self, cam_id: str = None, width: int = None, height: int = None, fps: int = None) -> dict:
         """Switch active camera and configure stream settings."""
         logger.info("Selecting camera %s: %sx%s @ %sfps", cam_id, width, height, fps)
+        needs_restart = False
         with self.lock:
+            target_cam = cam_id or self.active_camera_id
+            target_res = (int(width), int(height)) if (width and height) else self.resolution
+            target_fps = max(1, min(60, int(fps))) if fps else self.target_fps
+            proc_alive = (self.capture_proc is not None and self.capture_proc.poll() is None)
+
+            if (target_cam != self.active_camera_id or
+                target_res != self.resolution or
+                target_fps != self.target_fps or
+                not self.camera_enabled or
+                not proc_alive):
+                needs_restart = True
+
             if cam_id:
                 self.active_camera_id = cam_id
                 if not cam_id.startswith("virtual"):
                     self.camera_enabled = True
             if width and height:
-                self.resolution = (int(width), int(height))
+                self.resolution = target_res
             if fps:
-                self.target_fps = max(1, min(60, int(fps)))
-            # Pre-generate synthetic frame at new resolution so aspect ratio is immediate
-            self.last_frame = self._generate_synthetic_frame("Switching...")
-        self._restart_stream_pipeline()
+                self.target_fps = target_fps
+            if needs_restart:
+                self.last_frame = self._generate_synthetic_frame("Switching...")
+        if needs_restart:
+            self._restart_stream_pipeline()
         return self.get_state()
 
     def set_enabled(self, enabled: bool):
@@ -577,19 +611,25 @@ class CameraManager:
 
     def get_state(self) -> dict:
         with self.lock:
-            dev_node = f"/dev/{self.active_camera_id}" if self.active_camera_id else "/dev/null"
-            return {
-                "active_camera_id": self.active_camera_id,
-                "camera_enabled": self.camera_enabled,
-                "target_fps": self.target_fps,
-                "resolution": {
-                    "width": self.resolution[0],
-                    "height": self.resolution[1]
-                },
-                "supported_resolutions": self._get_supported_resolutions(dev_node),
-                "client_count": self.client_count,
-                "controls": self.get_camera_controls()
-            }
+            active_id = self.active_camera_id
+            cam_enabled = self.camera_enabled
+            t_fps = self.target_fps
+            res_w, res_h = self.resolution
+            c_count = self.client_count
+
+        dev_node = f"/dev/{active_id}" if active_id else "/dev/null"
+        return {
+            "active_camera_id": active_id,
+            "camera_enabled": cam_enabled,
+            "target_fps": t_fps,
+            "resolution": {
+                "width": res_w,
+                "height": res_h
+            },
+            "supported_resolutions": self._get_supported_resolutions(dev_node, use_cache=True),
+            "client_count": c_count,
+            "controls": self.get_camera_controls(active_id)
+        }
 
     def cleanup(self):
         self.running = False

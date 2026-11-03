@@ -413,7 +413,12 @@ function startVisualizerLoop() {
     animFrameId = requestAnimationFrame(loop);
 }
 
+let lastLightCommandTime = 0;
+let pendingLightRequests = 0;
+
 async function executeLightUpdate(immediate = false) {
+    lastLightCommandTime = Date.now();
+    pendingLightRequests++;
     try {
         const payload = {
             power: state.lights.power,
@@ -432,12 +437,18 @@ async function executeLightUpdate(immediate = false) {
         }
     } catch (e) {
         console.error("Failed to send light update:", e);
+    } finally {
+        pendingLightRequests = Math.max(0, pendingLightRequests - 1);
+        lastLightCommandTime = Date.now();
     }
 }
 
-const sendLightUpdateDebounced = debounce(() => executeLightUpdate(false), 120);
+const sendLightUpdateDebounced = debounce(() => executeLightUpdate(false), 90);
 
 function sendLightUpdate(immediate = false) {
+    lastLightCommandTime = Date.now();
+    lastUserInteraction = Date.now();
+    ledAutoOffHandled = false;
     if (immediate) {
         executeLightUpdate(true);
     } else {
@@ -451,6 +462,7 @@ class ReinventedColorWheel {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
         this.onChange = options.onChange || (() => { });
+        this.onFinish = options.onFinish || (() => { });
 
         // Color state: h in [0, 360), s in [0, 1], v in [0, 1]
         this.h = 0;
@@ -476,11 +488,16 @@ class ReinventedColorWheel {
     _initEvents() {
         const getPos = (e) => {
             const rect = this.canvas.getBoundingClientRect();
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const touch = (e.touches && e.touches.length > 0)
+                ? e.touches[0]
+                : (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0] : e);
+            const clientX = touch.clientX ?? 0;
+            const clientY = touch.clientY ?? 0;
+            const scaleX = rect.width > 0 ? (this.width / rect.width) : 1;
+            const scaleY = rect.height > 0 ? (this.height / rect.height) : 1;
             return {
-                x: (clientX - rect.left) * (this.width / rect.width),
-                y: (clientY - rect.top) * (this.height / rect.height)
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
             };
         };
 
@@ -490,20 +507,22 @@ class ReinventedColorWheel {
             const dy = pos.y - this.cy;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            if (dist >= this.innerRadius - 6 && dist <= this.outerRadius + 8) {
-                e.preventDefault();
-                this.isDraggingHue = true;
-                this._updateHue(dx, dy);
-            } else if (Math.abs(dx) <= this.boxHalfSize + 8 && Math.abs(dy) <= this.boxHalfSize + 8) {
-                e.preventDefault();
+            if (Math.abs(dx) <= this.boxHalfSize + 10 && Math.abs(dy) <= this.boxHalfSize + 10 && dist < this.innerRadius - 2) {
+                if (e.cancelable) e.preventDefault();
+                e.stopPropagation();
                 this.isDraggingSV = true;
                 this._updateSV(dx, dy);
+            } else if (dist >= this.innerRadius - 12 && dist <= this.outerRadius + 14) {
+                if (e.cancelable) e.preventDefault();
+                e.stopPropagation();
+                this.isDraggingHue = true;
+                this._updateHue(dx, dy);
             }
         };
 
         const onMove = (e) => {
             if (!this.isDraggingHue && !this.isDraggingSV) return;
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             const pos = getPos(e);
             const dx = pos.x - this.cx;
             const dy = pos.y - this.cy;
@@ -516,8 +535,11 @@ class ReinventedColorWheel {
         };
 
         const onEnd = () => {
-            this.isDraggingHue = false;
-            this.isDraggingSV = false;
+            if (this.isDraggingHue || this.isDraggingSV) {
+                this.isDraggingHue = false;
+                this.isDraggingSV = false;
+                this.onFinish();
+            }
         };
 
         this.canvas.addEventListener("mousedown", onStart);
@@ -527,6 +549,7 @@ class ReinventedColorWheel {
         this.canvas.addEventListener("touchstart", onStart, { passive: false });
         window.addEventListener("touchmove", onMove, { passive: false });
         window.addEventListener("touchend", onEnd);
+        window.addEventListener("touchcancel", onEnd);
     }
 
     _updateHue(dx, dy) {
@@ -700,6 +723,18 @@ class ReinventedColorWheel {
 
 let colorWheelInstance = null;
 
+function ensureLightPowerOnForControl() {
+    lastLightCommandTime = Date.now();
+    lastUserInteraction = Date.now();
+    ledAutoOffHandled = false;
+    if (!state.lights.power) {
+        state.lights.power = true;
+        const statusText = document.getElementById("powerStatusText");
+        if (statusText) statusText.textContent = "STRIP ACTIVE";
+    }
+    updateLedVisualizer();
+}
+
 function initColorWheel() {
     const canvas = document.getElementById("reinventedColorWheel");
     if (!canvas) return;
@@ -710,7 +745,12 @@ function initColorWheel() {
             if (hsvDisplay) {
                 hsvDisplay.textContent = `H: ${h}° S: ${Math.round(s * 100)}% V: ${Math.round(v * 100)}%`;
             }
-            syncRgbInputs(r, g, b, true);
+            syncRgbInputs(r, g, b, true, true);
+        },
+        onFinish: () => {
+            if (state.lights.power) {
+                sendLightUpdate(true);
+            }
         }
     });
 
@@ -764,19 +804,24 @@ function syncRgbInputs(r, g, b, fromWheel = false, sendBackend = true) {
     document.querySelectorAll(".btn-preset").forEach(btn => btn.classList.remove("active"));
     if (r === 255 && g === 255 && b === 255) document.getElementById("presetWhite")?.classList.add("active");
     else if (r === 255 && g === 214 && b === 164) document.getElementById("presetWarmWhite")?.classList.add("active");
+    else if (r === 255 && g === 234 && b === 0) document.getElementById("presetYellow")?.classList.add("active");
     else if (r === 255 && g === 0 && b === 0) document.getElementById("presetRed")?.classList.add("active");
     else if (r === 0 && g === 255 && b === 0) document.getElementById("presetGreen")?.classList.add("active");
     else if (r === 0 && g === 0 && b === 255) document.getElementById("presetBlue")?.classList.add("active");
 
-    if (sendBackend && state.lights.power) {
+    if (sendBackend) {
+        ensureLightPowerOnForControl();
         sendLightUpdate(false);
+    } else {
+        updateLedVisualizer();
     }
 }
 
 function setMasterPower(on) {
     state.lights.power = !!on;
+    lastLightCommandTime = Date.now();
+    lastUserInteraction = Date.now();
     if (state.lights.power) {
-        lastUserInteraction = Date.now();
         ledAutoOffHandled = false;
     }
     updateLedVisualizer();
@@ -788,26 +833,44 @@ function setMasterPower(on) {
 }
 
 function setupLightListeners() {
-    // Illuminated Bulb Lamp Toggle Button
+    // Illuminated Bulb Lamp Toggle Button (with iOS fast-tap support)
     const bulbBtn = document.getElementById("ledBulbBtn");
     if (bulbBtn) {
-        bulbBtn.addEventListener("click", () => setMasterPower(!state.lights.power));
+        let lastBulbTap = 0;
+        const handleBulbToggle = (e) => {
+            const now = Date.now();
+            if (now - lastBulbTap < 250) return;
+            lastBulbTap = now;
+            if (e.cancelable && e.type === "touchend") e.preventDefault();
+            setMasterPower(!state.lights.power);
+        };
+        bulbBtn.addEventListener("touchend", handleBulbToggle, { passive: false });
+        bulbBtn.addEventListener("click", handleBulbToggle);
     }
     const statusText = document.getElementById("powerStatusText");
     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
 
-    // Brightness Slider
+    // Brightness Slider (bind both input and change for iOS WebKit)
     const brightnessSlider = document.getElementById("brightnessSlider");
     const brightnessBadge = document.getElementById("brightnessValBadge");
-    brightnessSlider.value = state.lights.brightness_pct;
-    brightnessBadge.textContent = `${state.lights.brightness_pct}%`;
-    brightnessSlider.addEventListener("input", (e) => {
-        const val = parseInt(e.target.value, 10);
-        state.lights.brightness = val / 100.0;
-        state.lights.brightness_pct = val;
-        brightnessBadge.textContent = `${val}%`;
-        sendLightUpdate();
-    });
+    if (brightnessSlider && brightnessBadge) {
+        brightnessSlider.value = state.lights.brightness_pct;
+        brightnessBadge.textContent = `${state.lights.brightness_pct}%`;
+        const onBrightnessChange = (e) => {
+            const val = parseInt(e.target.value, 10);
+            state.lights.brightness = val / 100.0;
+            state.lights.brightness_pct = val;
+            brightnessBadge.textContent = `${val}%`;
+            if (val > 0) {
+                ensureLightPowerOnForControl();
+            } else {
+                updateLedVisualizer();
+            }
+            sendLightUpdate(e.type === "change");
+        };
+        brightnessSlider.addEventListener("input", onBrightnessChange);
+        brightnessSlider.addEventListener("change", onBrightnessChange);
+    }
 
     // Initialize Precise Reinvented Color Wheel
     initColorWheel();
@@ -817,35 +880,47 @@ function setupLightListeners() {
         const slider = document.getElementById(`slider${channel}`);
         const input = document.getElementById(`input${channel}`);
 
-        slider?.addEventListener("input", (e) => {
+        const onRgbSlider = (e) => {
             const val = parseInt(e.target.value, 10);
-            input.value = val;
+            if (input) input.value = val;
             const r = channel === "Red" ? val : state.lights.color.r;
             const g = channel === "Green" ? val : state.lights.color.g;
             const b = channel === "Blue" ? val : state.lights.color.b;
-            syncRgbInputs(r, g, b, false);
-        });
+            syncRgbInputs(r, g, b, false, true);
+            if (e.type === "change") {
+                sendLightUpdate(true);
+            }
+        };
+
+        slider?.addEventListener("input", onRgbSlider);
+        slider?.addEventListener("change", onRgbSlider);
 
         input?.addEventListener("change", (e) => {
             let val = parseInt(e.target.value, 10);
             if (isNaN(val)) val = 0;
             val = Math.max(0, Math.min(255, val));
             input.value = val;
-            slider.value = val;
+            if (slider) slider.value = val;
             const r = channel === "Red" ? val : state.lights.color.r;
             const g = channel === "Green" ? val : state.lights.color.g;
             const b = channel === "Blue" ? val : state.lights.color.b;
-            syncRgbInputs(r, g, b, false);
+            syncRgbInputs(r, g, b, false, true);
+            sendLightUpdate(true);
         });
     });
 
     // Presets (Left: White, Warm White, Yellow | Right: Red, Green, Blue)
-    document.getElementById("presetWhite")?.addEventListener("click", () => syncRgbInputs(255, 255, 255, false));
-    document.getElementById("presetWarmWhite")?.addEventListener("click", () => syncRgbInputs(255, 214, 164, false));
-    document.getElementById("presetYellow")?.addEventListener("click", () => syncRgbInputs(255, 234, 0, false));
-    document.getElementById("presetRed")?.addEventListener("click", () => syncRgbInputs(255, 0, 0, false));
-    document.getElementById("presetGreen")?.addEventListener("click", () => syncRgbInputs(0, 255, 0, false));
-    document.getElementById("presetBlue")?.addEventListener("click", () => syncRgbInputs(0, 0, 255, false));
+    const applyPresetColor = (r, g, b) => {
+        ensureLightPowerOnForControl();
+        syncRgbInputs(r, g, b, false, false);
+        sendLightUpdate(true);
+    };
+    document.getElementById("presetWhite")?.addEventListener("click", () => applyPresetColor(255, 255, 255));
+    document.getElementById("presetWarmWhite")?.addEventListener("click", () => applyPresetColor(255, 214, 164));
+    document.getElementById("presetYellow")?.addEventListener("click", () => applyPresetColor(255, 234, 0));
+    document.getElementById("presetRed")?.addEventListener("click", () => applyPresetColor(255, 0, 0));
+    document.getElementById("presetGreen")?.addEventListener("click", () => applyPresetColor(0, 255, 0));
+    document.getElementById("presetBlue")?.addEventListener("click", () => applyPresetColor(0, 0, 255));
 
     // Direct Editable Hex Input Listener (e.g. 00CC00)
     const hexInput = document.getElementById("wheelHexBadge");
@@ -867,8 +942,9 @@ function setupLightListeners() {
                 const r = parseInt(val.slice(0, 2), 16);
                 const g = parseInt(val.slice(2, 4), 16);
                 const b = parseInt(val.slice(4, 6), 16);
-                if (!state.lights.power) setMasterPower(true);
-                syncRgbInputs(r, g, b, false);
+                ensureLightPowerOnForControl();
+                syncRgbInputs(r, g, b, false, false);
+                sendLightUpdate(true);
             }
         };
 
@@ -898,24 +974,32 @@ function setupLightListeners() {
 
     // Effect Dropdown
     const effectSelect = document.getElementById("effectSelect");
-    effectSelect.value = state.lights.effect;
-    effectSelect.addEventListener("change", (e) => {
-        state.lights.effect = e.target.value;
-        showToast(`Effect set to: ${e.target.options[e.target.selectedIndex].text}`);
-        sendLightUpdate();
-    });
+    if (effectSelect) {
+        effectSelect.value = state.lights.effect;
+        effectSelect.addEventListener("change", (e) => {
+            state.lights.effect = e.target.value;
+            ensureLightPowerOnForControl();
+            showToast(`Effect set to: ${e.target.options[e.target.selectedIndex].text}`);
+            sendLightUpdate(true);
+        });
+    }
 
     // Effect Speed Slider
     const speedSlider = document.getElementById("speedSlider");
     const speedBadge = document.getElementById("speedValBadge");
-    speedSlider.value = state.lights.speed;
-    speedBadge.textContent = `${state.lights.speed} ms`;
-    speedSlider.addEventListener("input", (e) => {
-        const val = parseInt(e.target.value, 10);
-        state.lights.speed = val;
-        speedBadge.textContent = `${val} ms`;
-        sendLightUpdate();
-    });
+    if (speedSlider && speedBadge) {
+        speedSlider.value = state.lights.speed;
+        speedBadge.textContent = `${state.lights.speed} ms`;
+        const onSpeedChange = (e) => {
+            const val = parseInt(e.target.value, 10);
+            state.lights.speed = val;
+            speedBadge.textContent = `${val} ms`;
+            lastLightCommandTime = Date.now();
+            sendLightUpdate(e.type === "change");
+        };
+        speedSlider.addEventListener("input", onSpeedChange);
+        speedSlider.addEventListener("change", onSpeedChange);
+    }
 }
 
 
@@ -1658,26 +1742,103 @@ function sendHardwareControl(control, value) {
     }, 100);
 }
 
+function isMobileOrPortraitLayout() {
+    return window.innerWidth <= 1024 ||
+        window.innerHeight <= 540 ||
+        window.matchMedia("(orientation: portrait)").matches ||
+        window.matchMedia("(pointer: coarse)").matches;
+}
+
+function toggleCardFullscreen(cardEl) {
+    if (!cardEl) return;
+    if (cardEl.classList.contains("ios-fullscreen-card")) {
+        cardEl.classList.remove("ios-fullscreen-card");
+        return;
+    }
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) {
+        if (document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+        return;
+    }
+    if (typeof cardEl.requestFullscreen === "function") {
+        cardEl.requestFullscreen().catch(() => {
+            cardEl.classList.toggle("ios-fullscreen-card");
+        });
+    } else if (typeof cardEl.webkitRequestFullscreen === "function") {
+        try {
+            cardEl.webkitRequestFullscreen();
+        } catch (_) {
+            cardEl.classList.toggle("ios-fullscreen-card");
+        }
+    } else {
+        cardEl.classList.toggle("ios-fullscreen-card");
+    }
+}
+
 function setupCameraListeners() {
-    // In-Frame Mobile Camera Settings Overlay Controls
+    // In-Frame / Mobile Fixed Camera Settings Overlay Controls
     const overlay = document.getElementById("cameraSettingsOverlay");
+    const viewportCard = document.getElementById("viewportCard");
     const btnOpenOverlay = document.getElementById("btnToggleCamOverlay");
     const btnToolbarSettings = document.getElementById("btnToolbarSettings");
     const btnCloseOverlay = document.getElementById("btnCloseCamOverlay");
 
+    function syncCameraOverlayPortal() {
+        if (!overlay || !viewportCard) return;
+        if (isMobileOrPortraitLayout()) {
+            if (overlay.parentElement !== document.body) {
+                document.body.appendChild(overlay);
+            }
+        } else {
+            if (overlay.parentElement !== viewportCard) {
+                viewportCard.appendChild(overlay);
+            }
+        }
+    }
+
     function toggleOverlay(open) {
         if (!overlay) return;
+        syncCameraOverlayPortal();
         const willOpen = typeof open === "boolean" ? open : !overlay.classList.contains("open");
+        if (willOpen) {
+            document.getElementById("lightsPanel")?.classList.remove("mobile-open");
+            document.getElementById("mobileLedBackdrop")?.classList.remove("active");
+            document.getElementById("deviceSettingsOverlay")?.classList.remove("open");
+        }
         overlay.classList.toggle("open", willOpen);
     }
 
-    btnOpenOverlay?.addEventListener("click", () => toggleOverlay(true));
-    btnToolbarSettings?.addEventListener("click", () => toggleOverlay(true));
-    btnCloseOverlay?.addEventListener("click", () => toggleOverlay(false));
+    window.toggleChamberSettingsOverlay = toggleOverlay;
+    syncCameraOverlayPortal();
+    window.addEventListener("resize", syncCameraOverlayPortal, { passive: true });
+    window.addEventListener("orientationchange", () => setTimeout(syncCameraOverlayPortal, 120), { passive: true });
+
+    btnOpenOverlay?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOverlay(true);
+    });
+    btnToolbarSettings?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOverlay(true);
+    });
+    btnCloseOverlay?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOverlay(false);
+    });
 
     window.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && overlay?.classList.contains("open")) {
-            toggleOverlay(false);
+        if (e.key === "Escape") {
+            if (overlay?.classList.contains("open")) {
+                toggleOverlay(false);
+            }
+            viewportCard?.classList.remove("ios-fullscreen-card");
         }
     });
 
@@ -1795,12 +1956,14 @@ function setupCameraListeners() {
     const zoomBadge = document.getElementById("digitalZoomBadge");
     zoomSlider.value = state.camera.digital_zoom;
     zoomBadge.textContent = `${state.camera.digital_zoom}x`;
-    zoomSlider.addEventListener("input", (e) => {
+    const handleDigitalZoomChange = (e) => {
         state.camera.digital_zoom = parseFloat(e.target.value);
         zoomBadge.textContent = `${state.camera.digital_zoom.toFixed(1)}x`;
         applyViewportTransforms();
         saveConfig();
-    });
+    };
+    zoomSlider.addEventListener("input", handleDigitalZoomChange);
+    zoomSlider.addEventListener("change", handleDigitalZoomChange);
 
     // Flip Controls
     const btnFlipH = document.getElementById("btnFlipH");
@@ -1833,15 +1996,10 @@ function setupCameraListeners() {
         saveConfig();
     });
 
-    // Fullscreen Viewport
+    // Fullscreen Viewport (supports iOS fallback where div.requestFullscreen is unavailable)
     const btnFullscreen = document.getElementById("btnFullscreen");
-    const viewportCard = document.getElementById("viewportCard");
-    btnFullscreen.addEventListener("click", () => {
-        if (!document.fullscreenElement) {
-            viewportCard.requestFullscreen().catch(err => console.log(err));
-        } else {
-            document.exitFullscreen();
-        }
+    btnFullscreen?.addEventListener("click", () => {
+        toggleCardFullscreen(viewportCard);
     });
 
     // Unified Multi-Camera Snapshot (Combined Chamber + Device or Single Cam with 50px Twibbon)
@@ -1860,10 +2018,12 @@ function bindControlPair(sliderId, numId, ctrlName, autoId = null, autoCtrlName 
     const autoBox = autoId ? document.getElementById(autoId) : null;
 
     if (slider && num) {
-        slider.addEventListener("input", (e) => {
+        const handleSliderInput = (e) => {
             num.value = e.target.value;
             sendHardwareControl(ctrlName, e.target.value);
-        });
+        };
+        slider.addEventListener("input", handleSliderInput);
+        slider.addEventListener("change", handleSliderInput);
 
         num.addEventListener("change", (e) => {
             let val = parseInt(e.target.value, 10);
@@ -2180,20 +2340,57 @@ async function pollSystemStatus() {
             }
 
             // Continuously sync lights power and state across all clients
-            if (data.lights && data.lights.power !== undefined) {
-                const pwrBtn = document.getElementById("btnPowerToggle");
+            // Guard against in-flight user LED actions so status polling never reverts iOS touch interactions
+            const canSyncLightsFromPoll = (pendingLightRequests === 0) &&
+                ((Date.now() - lastLightCommandTime) > 3500) &&
+                (!colorWheel || !colorWheel.isDragging);
+
+            if (data.lights && data.lights.power !== undefined && canSyncLightsFromPoll) {
+                const pwrBtn = document.getElementById("ledBulbBtn");
                 const isInteractingPwr = (document.activeElement === pwrBtn);
                 if (!isInteractingPwr && state.lights.power !== data.lights.power) {
                     state.lights.power = data.lights.power;
                     updateLedVisualizer();
                     const statusText = document.getElementById("powerStatusText");
                     if (statusText) statusText.textContent = state.lights.power ? "STRIP ACTIVE" : "STRIP OFF";
+                    const pwrBadge = document.getElementById("ledPowerStateBadge");
+                    if (pwrBadge) {
+                        pwrBadge.textContent = state.lights.power ? "LIGHT ON" : "LIGHT OFF";
+                        pwrBadge.className = state.lights.power ? "badge accent-badge" : "badge off-badge";
+                    }
                     if (pwrBtn) {
                         pwrBtn.classList.toggle("active", state.lights.power);
-                        pwrBtn.classList.toggle("danger", !state.lights.power);
                     }
                     const mobPwr = document.getElementById("btnMobileLedPower");
                     if (mobPwr) mobPwr.classList.toggle("active", state.lights.power);
+                }
+
+                // Sync color, brightness, and effect if changed from another device
+                if (data.lights.color && typeof data.lights.color.r === "number") {
+                    const c = data.lights.color;
+                    if (c.r !== state.lights.color.r || c.g !== state.lights.color.g || c.b !== state.lights.color.b) {
+                        syncRgbInputs(c.r, c.g, c.b, false, false);
+                    }
+                }
+                if (typeof data.lights.brightness === "number" && data.lights.brightness !== state.lights.brightness) {
+                    const bSlider = document.getElementById("brightnessSlider");
+                    if (bSlider && document.activeElement !== bSlider) {
+                        state.lights.brightness = data.lights.brightness;
+                        bSlider.value = data.lights.brightness;
+                        const bVal = document.getElementById("brightnessVal");
+                        if (bVal) bVal.textContent = `${data.lights.brightness}%`;
+                        updateLedVisualizer();
+                    }
+                }
+                if (data.lights.effect && data.lights.effect !== state.lights.effect) {
+                    const effSelect = document.getElementById("effectSelect");
+                    if (effSelect && document.activeElement !== effSelect) {
+                        state.lights.effect = data.lights.effect;
+                        effSelect.value = data.lights.effect;
+                        const speedGroup = document.getElementById("speedControlGroup");
+                        if (speedGroup) speedGroup.style.display = state.lights.effect === "solid" ? "none" : "flex";
+                        updateLedVisualizer();
+                    }
                 }
                 initialLightsSynced = true;
             }
@@ -2344,15 +2541,66 @@ function setupMobileLedDrawer() {
     const lightsPanel = document.getElementById("lightsPanel");
     const backdrop = document.getElementById("mobileLedBackdrop");
     const btnClose = document.getElementById("btnCloseLedPanel");
+    const controlsCol = document.getElementById("dashboardControlsCol");
+    const ocrProjectsPanel = document.getElementById("ocrProjectsPanel");
+    let lastDrawerOpenTime = 0;
+
+    // Portal #lightsPanel and #mobileLedBackdrop directly to document.body on mobile/portrait
+    // so iOS WebKit (Safari, Chrome, Firefox on iPhone) never traps #lightsPanel inside
+    // .dashboard-container's overflow/scrolling stacking context underneath #mobileLedBackdrop.
+    function syncLedDrawerPortal() {
+        if (!lightsPanel) return;
+        if (backdrop && backdrop.parentElement !== document.body) {
+            document.body.appendChild(backdrop);
+        }
+        if (isMobileOrPortraitLayout()) {
+            if (lightsPanel.parentElement !== document.body) {
+                document.body.appendChild(lightsPanel);
+            }
+        } else if (controlsCol && lightsPanel.parentElement !== controlsCol) {
+            lightsPanel.classList.remove("mobile-open");
+            backdrop?.classList.remove("active");
+            if (ocrProjectsPanel && ocrProjectsPanel.parentElement === controlsCol) {
+                controlsCol.insertBefore(lightsPanel, ocrProjectsPanel);
+            } else {
+                controlsCol.appendChild(lightsPanel);
+            }
+        }
+        setTimeout(() => {
+            if (colorWheel) {
+                colorWheel.resize();
+                colorWheel.render();
+            }
+        }, 60);
+    }
 
     function toggleMobileDrawer(open) {
         if (!lightsPanel) return;
+        syncLedDrawerPortal();
         const willOpen = typeof open === "boolean" ? open : !lightsPanel.classList.contains("mobile-open");
+        if (willOpen) {
+            lastDrawerOpenTime = Date.now();
+            document.getElementById("cameraSettingsOverlay")?.classList.remove("open");
+            document.getElementById("deviceSettingsOverlay")?.classList.remove("open");
+        }
         lightsPanel.classList.toggle("mobile-open", willOpen);
         if (backdrop) {
             backdrop.classList.toggle("active", willOpen);
         }
+        if (willOpen) {
+            setTimeout(() => {
+                if (colorWheel) {
+                    colorWheel.resize();
+                    colorWheel.render();
+                }
+            }, 80);
+        }
     }
+
+    window.toggleMobileLedDrawer = toggleMobileDrawer;
+    syncLedDrawerPortal();
+    window.addEventListener("resize", syncLedDrawerPortal, { passive: true });
+    window.addEventListener("orientationchange", () => setTimeout(syncLedDrawerPortal, 120), { passive: true });
 
     if (btnHamburger) {
         btnHamburger.addEventListener("click", (e) => {
@@ -2374,7 +2622,10 @@ function setupMobileLedDrawer() {
         backdrop.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (Date.now() - lastDrawerOpenTime < 280) return;
             toggleMobileDrawer(false);
+            document.getElementById("cameraSettingsOverlay")?.classList.remove("open");
+            document.getElementById("deviceSettingsOverlay")?.classList.remove("open");
         });
     }
 
@@ -4222,6 +4473,7 @@ function stopDeviceCameraStream() {
 function setupDeviceCameraManager() {
     const chk = document.getElementById("chkEnableDeviceCam");
     const overlay = document.getElementById("deviceSettingsOverlay");
+    const deviceCard = document.getElementById("deviceViewportCard");
     const btnOpenOverlay = document.getElementById("btnToggleDeviceOverlay");
     const btnToolbarSettings = document.getElementById("btnDeviceSettings");
     const btnCloseOverlay = document.getElementById("btnCloseDeviceOverlay");
@@ -4234,15 +4486,60 @@ function setupDeviceCameraManager() {
         }
     });
 
+    function syncDeviceOverlayPortal() {
+        if (!overlay || !deviceCard) return;
+        if (isMobileOrPortraitLayout()) {
+            if (overlay.parentElement !== document.body) {
+                document.body.appendChild(overlay);
+            }
+        } else {
+            if (overlay.parentElement !== deviceCard) {
+                deviceCard.appendChild(overlay);
+            }
+        }
+    }
+
     function toggleDeviceOverlay(open) {
         if (!overlay) return;
+        syncDeviceOverlayPortal();
         const willOpen = typeof open === "boolean" ? open : !overlay.classList.contains("open");
+        if (willOpen) {
+            document.getElementById("lightsPanel")?.classList.remove("mobile-open");
+            document.getElementById("mobileLedBackdrop")?.classList.remove("active");
+            document.getElementById("cameraSettingsOverlay")?.classList.remove("open");
+        }
         overlay.classList.toggle("open", willOpen);
     }
 
-    btnOpenOverlay?.addEventListener("click", () => toggleDeviceOverlay(true));
-    btnToolbarSettings?.addEventListener("click", () => toggleDeviceOverlay(true));
-    btnCloseOverlay?.addEventListener("click", () => toggleDeviceOverlay(false));
+    window.toggleDeviceSettingsOverlay = toggleDeviceOverlay;
+    syncDeviceOverlayPortal();
+    window.addEventListener("resize", syncDeviceOverlayPortal, { passive: true });
+    window.addEventListener("orientationchange", () => setTimeout(syncDeviceOverlayPortal, 120), { passive: true });
+
+    btnOpenOverlay?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDeviceOverlay(true);
+    });
+    btnToolbarSettings?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDeviceOverlay(true);
+    });
+    btnCloseOverlay?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDeviceOverlay(false);
+    });
+
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            if (overlay?.classList.contains("open")) {
+                toggleDeviceOverlay(false);
+            }
+            deviceCard?.classList.remove("ios-fullscreen-card");
+        }
+    });
 
     // Device Stream Toggle (Mute / Unmute video tracks)
     const btnToggleStream = document.getElementById("btnToggleDeviceCamStream");
@@ -4341,15 +4638,10 @@ function setupDeviceCameraManager() {
         saveConfig();
     });
 
-    // Fullscreen
+    // Fullscreen (supports iOS fallback where div.requestFullscreen is unavailable)
     const btnFullscreen = document.getElementById("btnDeviceFullscreen");
-    const deviceCard = document.getElementById("deviceViewportCard");
     btnFullscreen?.addEventListener("click", () => {
-        if (!document.fullscreenElement) {
-            deviceCard.requestFullscreen().catch(err => console.log(err));
-        } else {
-            document.exitFullscreen();
-        }
+        toggleCardFullscreen(deviceCard);
     });
 
     // Focus / Auto Focus Mode & Distance
@@ -4377,12 +4669,14 @@ function setupDeviceCameraManager() {
     if (focusDistSlider && focusDistBadge) {
         focusDistSlider.value = state.deviceCamera.focus_distance || 0;
         focusDistBadge.textContent = focusDistSlider.value;
-        focusDistSlider.addEventListener("input", (e) => {
+        const handleFocusDistChange = (e) => {
             state.deviceCamera.focus_distance = parseInt(e.target.value, 10);
             focusDistBadge.textContent = state.deviceCamera.focus_distance;
             applyDeviceHardwareConstraints();
             saveConfig();
-        });
+        };
+        focusDistSlider.addEventListener("input", handleFocusDistChange);
+        focusDistSlider.addEventListener("change", handleFocusDistChange);
     }
 
     // Settings Inputs
@@ -4416,12 +4710,14 @@ function setupDeviceCameraManager() {
     if (zoomSlider && zoomBadge) {
         zoomSlider.value = state.deviceCamera.digital_zoom || 1.0;
         zoomBadge.textContent = `${(state.deviceCamera.digital_zoom || 1.0).toFixed(1)}x`;
-        zoomSlider.addEventListener("input", (e) => {
+        const handleDevZoomChange = (e) => {
             state.deviceCamera.digital_zoom = parseFloat(e.target.value);
             zoomBadge.textContent = `${state.deviceCamera.digital_zoom.toFixed(1)}x`;
             applyDeviceViewportTransforms();
             saveConfig();
-        });
+        };
+        zoomSlider.addEventListener("input", handleDevZoomChange);
+        zoomSlider.addEventListener("change", handleDevZoomChange);
     }
 
     const brightSlider = document.getElementById("deviceBrightnessSlider");
@@ -4429,12 +4725,14 @@ function setupDeviceCameraManager() {
     if (brightSlider && brightBadge) {
         brightSlider.value = state.deviceCamera.filters.brightness || 100;
         brightBadge.textContent = `${brightSlider.value}%`;
-        brightSlider.addEventListener("input", (e) => {
+        const handleDevBrightChange = (e) => {
             state.deviceCamera.filters.brightness = parseInt(e.target.value, 10);
             brightBadge.textContent = `${state.deviceCamera.filters.brightness}%`;
             applyDeviceViewportTransforms();
             saveConfig();
-        });
+        };
+        brightSlider.addEventListener("input", handleDevBrightChange);
+        brightSlider.addEventListener("change", handleDevBrightChange);
     }
 
     const contrastSlider = document.getElementById("deviceContrastSlider");
@@ -4442,12 +4740,14 @@ function setupDeviceCameraManager() {
     if (contrastSlider && contrastBadge) {
         contrastSlider.value = state.deviceCamera.filters.contrast || 100;
         contrastBadge.textContent = `${contrastSlider.value}%`;
-        contrastSlider.addEventListener("input", (e) => {
+        const handleDevContrastChange = (e) => {
             state.deviceCamera.filters.contrast = parseInt(e.target.value, 10);
             contrastBadge.textContent = `${state.deviceCamera.filters.contrast}%`;
             applyDeviceViewportTransforms();
             saveConfig();
-        });
+        };
+        contrastSlider.addEventListener("input", handleDevContrastChange);
+        contrastSlider.addEventListener("change", handleDevContrastChange);
     }
 
     const satSlider = document.getElementById("deviceSaturationSlider");
@@ -4455,12 +4755,14 @@ function setupDeviceCameraManager() {
     if (satSlider && satBadge) {
         satSlider.value = state.deviceCamera.filters.saturation ?? 100;
         satBadge.textContent = `${satSlider.value}%`;
-        satSlider.addEventListener("input", (e) => {
+        const handleDevSatChange = (e) => {
             state.deviceCamera.filters.saturation = parseInt(e.target.value, 10);
             satBadge.textContent = `${state.deviceCamera.filters.saturation}%`;
             applyDeviceViewportTransforms();
             saveConfig();
-        });
+        };
+        satSlider.addEventListener("input", handleDevSatChange);
+        satSlider.addEventListener("change", handleDevSatChange);
     }
 
     const sharpSlider = document.getElementById("deviceSharpnessSlider");
@@ -4468,12 +4770,14 @@ function setupDeviceCameraManager() {
     if (sharpSlider && sharpBadge) {
         sharpSlider.value = state.deviceCamera.filters.sharpness ?? 100;
         sharpBadge.textContent = `${sharpSlider.value}%`;
-        sharpSlider.addEventListener("input", (e) => {
+        const handleDevSharpChange = (e) => {
             state.deviceCamera.filters.sharpness = parseInt(e.target.value, 10);
             sharpBadge.textContent = `${state.deviceCamera.filters.sharpness}%`;
             applyDeviceViewportTransforms();
             saveConfig();
-        });
+        };
+        sharpSlider.addEventListener("input", handleDevSharpChange);
+        sharpSlider.addEventListener("change", handleDevSharpChange);
     }
 }
 
@@ -5376,10 +5680,21 @@ document.addEventListener("DOMContentLoaded", () => {
     pollSystemStatus();
     setInterval(pollSystemStatus, 2500);
 
-    // Resume polling immediately when user switches back to this tab
+    // Resume polling and camera stream immediately when user switches back to this tab on iOS / mobile
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden && !systemSleepHandled) {
             pollSystemStatus();
+            if (state.camera.enabled) {
+                reconnectCameraStream(true);
+            }
+        }
+    });
+    window.addEventListener("pageshow", (e) => {
+        if (e.persisted && !systemSleepHandled) {
+            pollSystemStatus();
+            if (state.camera.enabled) {
+                reconnectCameraStream(true);
+            }
         }
     });
 

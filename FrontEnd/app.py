@@ -1028,6 +1028,7 @@ async def proxy_lights_get(user: str = Depends(require_auth)):
 
 @app.post("/api/lights")
 async def proxy_lights_post(request: Request, user: str = Depends(require_auth)):
+    record_activity()
     payload = await request.json()
     _status_cache["data"] = None
     try:
