@@ -890,7 +890,7 @@ async def auto_detect_boxes(project_id: str, payload: dict, user: str = Depends(
     if not raw_bytes:
         return {"status": "error", "message": "No image available for detection"}
 
-    detection_result = detect_thermometers_in_image(raw_bytes)
+    detection_result = await asyncio.to_thread(detect_thermometers_in_image, raw_bytes)
     boxes = detection_result.get("boxes", [])
     if boxes and proj_dir.exists():
         meta = get_project_metadata(proj_dir)
@@ -932,32 +932,45 @@ async def ping_network():
     return {"status": "pong", "time": time.time()}
 
 
-_status_cache = {"data": None, "timestamp": 0.0}
+_status_cache = {"data": None, "timestamp": 0.0, "fail_count": 0}
 
 
 @app.get("/api/status")
 async def proxy_status(user: str = Depends(require_auth)):
     now = time.time()
-    if _status_cache["data"] and (now - _status_cache["timestamp"] < 1.0):
+    if _status_cache["data"] and (now - _status_cache["timestamp"] < 1.2):
         return _status_cache["data"]
 
-    try:
-        res = await backend_client.get("/api/status", timeout=4.0)
-        data = res.json()
-        _status_cache["data"] = data
-        _status_cache["timestamp"] = now
-        return data
-    except Exception as e:
-        return {
-            "status": "offline",
-            "error": f"Raspberry Pi ({BECKEND_RPI_IP}) unreachable: {str(e)}",
-            "rpi_ip": BECKEND_RPI_IP,
-            "rpi_port": BECKEND_RPI_PORT,
-            "timestamp": time.time(),
-            "system": None,
-            "lights": None,
-            "camera": None
-        }
+    last_err = None
+    for attempt in range(2):
+        try:
+            res = await backend_client.get("/api/status", timeout=3.5, headers={"Connection": "close"})
+            if res.status_code == 200:
+                data = res.json()
+                _status_cache["data"] = data
+                _status_cache["timestamp"] = time.time()
+                _status_cache["fail_count"] = 0
+                return data
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                await asyncio.sleep(0.12)
+
+    _status_cache["fail_count"] = _status_cache.get("fail_count", 0) + 1
+    # Grace period: prevent false DISCONNECTED toggling on transient HTTP/1.0 socket close or Pi busyness
+    if _status_cache["data"] and _status_cache["fail_count"] < 3 and (now - _status_cache["timestamp"] < 15.0):
+        return _status_cache["data"]
+
+    return {
+        "status": "offline",
+        "error": f"Raspberry Pi ({BECKEND_RPI_IP}) unreachable: {str(last_err)}",
+        "rpi_ip": BECKEND_RPI_IP,
+        "rpi_port": BECKEND_RPI_PORT,
+        "timestamp": time.time(),
+        "system": None,
+        "lights": None,
+        "camera": None
+    }
 
 
 @app.get("/api/cameras")
@@ -1273,7 +1286,7 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
         pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
         # Live canvas test frames sent from the UI are always single-feed full viewport frames
         is_single = bool(image_b64)
-        ocr_res = perform_display_ocr(pil_img, box, is_single_feed=is_single)
+        ocr_res = await asyncio.to_thread(perform_display_ocr, pil_img, box, is_single)
 
         crop_b64 = ""
         if ocr_res.get("crop_bytes"):
@@ -1315,7 +1328,7 @@ async def export_project_excel(project_id: str, user: str = Depends(require_auth
     boxes = meta.get("boxes", [])
 
     try:
-        excel_bytes = generate_project_excel(proj_dir, proj_name, boxes)
+        excel_bytes = await asyncio.to_thread(generate_project_excel, proj_dir, proj_name, boxes)
         filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', proj_name)}_Calibration_Report.xlsx"
         return Response(
             content=excel_bytes,

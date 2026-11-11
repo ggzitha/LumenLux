@@ -2253,12 +2253,15 @@ function setupDirectShowControls() {
 let initialControlsSynced = false;
 let initialLightsSynced = false;
 let initialResolutionSynced = false;
+let consecutiveStatusFailures = 0;
+let statusPollInFlight = false;
 
 async function pollSystemStatus() {
-    // Stop polling if tab is hidden in background or system is in 10-minute inactivity sleep
-    if (document.hidden || systemSleepHandled) {
+    // Stop polling if tab is hidden in background, system is in 10-minute inactivity sleep, or previous poll is still in flight
+    if (document.hidden || systemSleepHandled || statusPollInFlight) {
         return;
     }
+    statusPollInFlight = true;
 
     const pingStart = performance.now();
     fetch("/api/ping")
@@ -2283,6 +2286,7 @@ async function pollSystemStatus() {
         const statusTextMobile = document.getElementById("statusTextMobile");
 
         if (data.status === "ok" && data.system) {
+            consecutiveStatusFailures = 0;
             state.system.online = true;
             statusDot.className = "pill-dot online";
             statusText.textContent = "CONNECTED";
@@ -2395,24 +2399,32 @@ async function pollSystemStatus() {
                 initialLightsSynced = true;
             }
         } else {
-            state.system.online = false;
-            statusDot.className = "pill-dot offline";
-            statusText.textContent = "OFFLINE";
-            latencyText.textContent = "--";
-            if (statusDotMobile) statusDotMobile.className = "pill-dot offline";
-            if (statusTextMobile) statusTextMobile.textContent = "OFFLINE";
+            consecutiveStatusFailures++;
+            if (consecutiveStatusFailures >= 3) {
+                state.system.online = false;
+                statusDot.className = "pill-dot offline";
+                statusText.textContent = "OFFLINE";
+                latencyText.textContent = "--";
+                if (statusDotMobile) statusDotMobile.className = "pill-dot offline";
+                if (statusTextMobile) statusTextMobile.textContent = "OFFLINE";
+            }
         }
     } catch (e) {
-        const dot = document.getElementById("statusDot");
-        const txt = document.getElementById("statusText");
-        const lat = document.getElementById("latencyText");
-        if (dot) dot.className = "pill-dot offline";
-        if (txt) txt.textContent = "DISCONNECTED";
-        if (lat) lat.textContent = "--";
-        const dotM = document.getElementById("statusDotMobile");
-        const txtM = document.getElementById("statusTextMobile");
-        if (dotM) dotM.className = "pill-dot offline";
-        if (txtM) txtM.textContent = "DISCONNECTED";
+        consecutiveStatusFailures++;
+        if (consecutiveStatusFailures >= 3) {
+            const dot = document.getElementById("statusDot");
+            const txt = document.getElementById("statusText");
+            const lat = document.getElementById("latencyText");
+            if (dot) dot.className = "pill-dot offline";
+            if (txt) txt.textContent = "DISCONNECTED";
+            if (lat) lat.textContent = "--";
+            const dotM = document.getElementById("statusDotMobile");
+            const txtM = document.getElementById("statusTextMobile");
+            if (dotM) dotM.className = "pill-dot offline";
+            if (txtM) txtM.textContent = "DISCONNECTED";
+        }
+    } finally {
+        statusPollInFlight = false;
     }
 }
 

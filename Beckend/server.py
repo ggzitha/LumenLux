@@ -164,6 +164,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self._set_cors_headers("application/json")
         self.send_header("Content-Length", str(len(body_bytes)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body_bytes)
 
