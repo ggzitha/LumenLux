@@ -1487,13 +1487,21 @@
                                 Excel export</p>
                         </div>
                     </div>
-                    <div class="ocr-header-actions" style="display: flex; gap: 8px; align-items: center;">
+                    <div class="ocr-header-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                         <button type="button" class="btn-panel-action btn-add-project" id="btnCreateProjectPrompt"
                             title="Create New Project">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                             </svg>
                             <span>+ New Project</span>
+                        </button>
+                        <button type="button" class="btn-panel-action btn-train-models" id="btnOpenTrainModal"
+                            title="Train Custom PyTorch 7-Segment CNN Model (CPU)"
+                            style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(14, 165, 233, 0.22)); border: 1px solid rgba(16, 185, 129, 0.45); color: #34d399;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z" />
+                            </svg>
+                            <span>Train Models</span>
                         </button>
                         <button class="panel-collapse-btn" id="collapseOcrPanel" type="button"
                             title="Toggle Projects Panel">
@@ -1690,7 +1698,7 @@
 
     <!-- Live ROI OCR Instant Test & Preview Modal -->
     <div class="ocr-modal-backdrop" id="roiTestResultModal">
-        <div class="ocr-modal-card" style="max-width: 440px;">
+        <div class="ocr-modal-card" style="max-width: 480px;">
             <div class="ocr-modal-header">
                 <div class="ocr-modal-title">
                     <div class="ocr-modal-icon" id="roiTestStatusIcon"
@@ -1706,7 +1714,7 @@
                 </div>
                 <button type="button" class="ocr-modal-close" id="btnCloseRoiTestModal" title="Close">✕</button>
             </div>
-            <div class="ocr-modal-body" style="gap: 14px;">
+            <div class="ocr-modal-body" style="gap: 12px;">
                 <!-- Straightened Crop Image Preview -->
                 <div class="roi-test-preview-wrap">
                     <div class="roi-test-crop-label">Straightened Perspective Crop:</div>
@@ -1735,9 +1743,179 @@
                     </div>
                 </div>
 
-                <div class="ocr-modal-actions" style="margin-top: 6px;">
+                <!-- Interactive Train Mode: Collect & Label Reading from This ROI Crop -->
+                <div class="roi-train-label-card" style="background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(52, 211, 153, 0.32); border-radius: 10px; padding: 11px 12px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.78rem; font-weight: 700; color: #34d399; letter-spacing: 0.02em;">
+                            🎓 Train Mode: Label Actual Reading
+                        </span>
+                        <span id="roiTrainSavedStatus" style="font-size: 0.72rem; color: var(--text-secondary);">Fixed decimal by position</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="roiTestLabelInput" class="ocr-input"
+                            placeholder="e.g. 14.6 or 14.954"
+                            style="flex: 1; padding: 7px 10px; font-size: 0.92rem; font-weight: 700; font-family: monospace;">
+                        <button type="button" class="btn-ocr-submit" id="btnSaveRoiLabel"
+                            style="padding: 7px 12px; font-size: 0.8rem; background: linear-gradient(135deg, #10b981, #0284c7); white-space: nowrap;">
+                            <span>+ Save Label</span>
+                        </button>
+                        <button type="button" class="btn-ocr-cancel" id="btnOpenTrainFromTest"
+                            title="Open Train Models Studio"
+                            style="padding: 7px 10px; font-size: 0.78rem; white-space: nowrap;">
+                            <span>Train Studio</span>
+                        </button>
+                    </div>
+                    <div id="roiTestDigitPreviews" style="display: none; gap: 6px; align-items: center; flex-wrap: wrap; padding-top: 4px;"></div>
+                </div>
+
+                <div class="ocr-modal-actions" style="margin-top: 4px;">
                     <button type="button" class="btn-ocr-submit" id="btnOkRoiTestModal" style="width: 100%;">
                         <span>Close & Keep Position</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PyTorch CPU 7-Segment CNN Model Training Studio Modal -->
+    <div class="ocr-modal-backdrop" id="ocrTrainModal">
+        <div class="ocr-modal-card" style="max-width: 680px; width: 95vw; max-height: 90vh; overflow-y: auto;">
+            <div class="ocr-modal-header">
+                <div class="ocr-modal-title">
+                    <div class="ocr-modal-icon"
+                        style="background: rgba(16, 185, 129, 0.16); color: #34d399; border-color: rgba(16, 185, 129, 0.38);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3>PyTorch CPU 7-Segment CNN Trainer</h3>
+                        <p>Collect ROI crops, label readings, augment & train custom digit classifier</p>
+                    </div>
+                </div>
+                <button type="button" class="ocr-modal-close" id="btnCloseTrainModal" title="Close">✕</button>
+            </div>
+
+            <div class="ocr-modal-body" style="gap: 14px;">
+                <!-- 1. Active Model & Dataset Status Summary -->
+                <div class="roi-test-data-card" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; padding: 12px;">
+                    <div>
+                        <div style="font-size: 0.72rem; color: var(--text-secondary);">Model Status</div>
+                        <div id="trainModelStatusBadge" style="font-size: 0.9rem; font-weight: 700; color: #eab308;">Not Trained Yet</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.72rem; color: var(--text-secondary);">Validation Accuracy</div>
+                        <div id="trainValAccBadge" style="font-size: 0.95rem; font-weight: 800; color: #34d399;">-- %</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.72rem; color: var(--text-secondary);">Labeled Frames / Digits</div>
+                        <div id="trainTotalSamplesBadge" style="font-size: 0.9rem; font-weight: 700; color: var(--neon-cyan);">0 frames (0 digits)</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.72rem; color: var(--text-secondary);">Mapped full.classes</div>
+                        <div id="trainClassesListText" style="font-size: 0.75rem; font-family: monospace; color: #cbd5e1; word-break: break-all;">0-9 + blank</div>
+                    </div>
+                </div>
+
+                <!-- 2. Live ROI Crop & Label Collector (Just like Test Pop-Up) -->
+                <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: var(--neon-cyan);">
+                            1. Collect & Label ROI Data (20–30 per class recommended)
+                        </span>
+                        <button type="button" class="btn-roi-tool" id="btnSeedFromProject"
+                            title="Automatically extract and label ROI crops from all snapshots in Active Project"
+                            style="font-size: 0.75rem; padding: 4px 10px; border-color: rgba(52, 211, 153, 0.4); color: #34d399;">
+                            <span>⚡ Auto-Collect from Project Snapshots</span>
+                        </button>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <select id="trainRoiBoxSelect" class="select-custom" style="flex: 1; min-width: 160px; padding: 6px 10px; font-size: 0.82rem;">
+                            <option value="">-- Select ROI Box --</option>
+                        </select>
+                        <button type="button" class="btn-roi-tool" id="btnTrainGrabRoiCrop" style="padding: 6px 12px; font-size: 0.8rem;">
+                            <span>📷 Crop Selected ROI</span>
+                        </button>
+                    </div>
+
+                    <div id="trainLiveCropContainer" style="display: none; flex-direction: column; gap: 8px; background: rgba(2, 6, 23, 0.65); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <img id="trainLiveCropImg" src="" alt="ROI Crop" style="max-height: 76px; max-width: 220px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.35); object-fit: contain; background: #000;">
+                            <div style="flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 6px;">
+                                <label style="font-size: 0.75rem; color: var(--text-secondary);">Enter Actual Display Reading (e.g. 14.6 or 14.954):</label>
+                                <div style="display: flex; gap: 6px;">
+                                    <input type="text" id="trainModalLabelInput" class="ocr-input" placeholder="e.g. 14.6" style="flex: 1; padding: 6px 10px; font-family: monospace; font-weight: 700;">
+                                    <button type="button" class="btn-ocr-submit" id="btnTrainModalSaveLabel" style="padding: 6px 12px; font-size: 0.8rem;">
+                                        <span>+ Save Label</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="trainModalDigitStrip" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;"></div>
+                    </div>
+                </div>
+
+                <!-- 3. Per-Class Sample Counts (0-9 + blank) -->
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.78rem; font-weight: 700; color: #e2e8f0;">Class Distribution (0–9 Digits + Blank):</span>
+                        <span style="font-size: 0.72rem; color: var(--text-secondary);">Target: 20–30 samples/class + CPU Augmentation</span>
+                    </div>
+                    <div id="trainClassCountsGrid" style="display: grid; grid-template-columns: repeat(11, minmax(44px, 1fr)); gap: 5px; text-align: center;"></div>
+                </div>
+
+                <!-- 4. CPU Training Hyperparameters (Loaded from .env) -->
+                <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 11px 12px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="font-size: 0.78rem; font-weight: 700; color: #e2e8f0;">
+                        2. CPU Training & Augmentation Settings (Configured via <code style="color: var(--neon-cyan);">.env</code>)
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px;">
+                        <div>
+                            <label style="font-size: 0.7rem; color: var(--text-secondary);">Epochs</label>
+                            <input type="number" id="trainEpochsInput" class="ocr-input" value="35" min="5" max="200" style="padding: 5px 8px; font-size: 0.82rem;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.7rem; color: var(--text-secondary);">Batch Size</label>
+                            <input type="number" id="trainBatchInput" class="ocr-input" value="32" min="4" max="128" style="padding: 5px 8px; font-size: 0.82rem;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.7rem; color: var(--text-secondary);">CPU Threads (4–8)</label>
+                            <input type="number" id="trainThreadsInput" class="ocr-input" value="6" min="1" max="16" style="padding: 5px 8px; font-size: 0.82rem;">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; padding-top: 14px;">
+                            <input type="checkbox" id="trainHoldOutFramesCheck" checked>
+                            <label for="trainHoldOutFramesCheck" style="font-size: 0.73rem; color: #cbd5e1; cursor: pointer;" title="Hold out whole frames for validation to prevent train/val digit leakage">
+                                Hold-out whole frames
+                            </label>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.71rem; color: var(--text-secondary); line-height: 1.4;">
+                        Augmentation active: Brightness/Contrast jitter, random affine shifts &amp; shear. Inference runs with <code style="color: #34d399;">intra_op_num_threads=1</code> per worker and inserts the fixed decimal point by position.
+                    </div>
+                </div>
+
+                <!-- 5. Misclassified Crops / Alignment Diagnostics (Shown if Val Accuracy < 100% or recent frames exist) -->
+                <div id="trainMisclassifiedSection" style="display: none; flex-direction: column; gap: 6px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.28); border-radius: 10px; padding: 10px;">
+                    <div style="font-size: 0.76rem; font-weight: 700; color: #f87171;">
+                        🔍 Misclassified / Low-Confidence Crops (Check ROI Alignment before adding data):
+                    </div>
+                    <div id="trainMisclassifiedList" style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;"></div>
+                </div>
+
+                <!-- 6. Recent Labeled Frames Queue -->
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <div style="font-size: 0.76rem; font-weight: 700; color: #cbd5e1;">Recent Labeled ROI Crops:</div>
+                    <div id="trainRecentFramesList" style="display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto;"></div>
+                </div>
+
+                <!-- 7. Actions -->
+                <div class="ocr-modal-actions" style="margin-top: 4px; display: flex; gap: 10px;">
+                    <button type="button" class="btn-ocr-cancel" id="btnCancelTrainModal">Close</button>
+                    <button type="button" class="btn-ocr-submit" id="btnStartCpuTraining"
+                        style="flex: 1; background: linear-gradient(135deg, #10b981, #0284c7); box-shadow: 0 0 18px rgba(16, 185, 129, 0.35);">
+                        <span id="trainSubmitText">🚀 Run CPU Training Now</span>
+                        <div class="ocr-spinner" id="trainSpinner" style="display: none;"></div>
                     </button>
                 </div>
             </div>
@@ -1752,7 +1930,7 @@
         window.APP_DEFAULTS = {{ app_defaults | tojson }};
         window.INITIAL_CAMERAS = {{ initial_cameras | tojson }};
     </script>
-    <script src="/static/js/app.js?v=8.3"></script>
+    <script src="/static/js/app.js?v=8.4"></script>
 </body>
 
 </html>

@@ -24,7 +24,14 @@ import re
 import json
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from PIL import Image
-from ocr_engine import detect_thermometers_in_image, perform_display_ocr, generate_project_excel
+from ocr_engine import detect_thermometers_in_image, perform_display_ocr, generate_project_excel, extract_roi_region
+from ocr_trainer import (
+    get_training_dataset_stats,
+    save_labeled_roi_crop,
+    delete_labeled_frame,
+    train_custom_model,
+    get_train_config
+)
 
 # Load environment configuration
 load_dotenv()
@@ -184,6 +191,7 @@ def get_app_defaults() -> dict:
         "default_stream_engine": DEFAULT_STREAM_ENGINE,
         "data_dir": str(DATA_DIR),
         "projects_dir": str(PROJECTS_DIR),
+        "ocr_train_config": get_train_config(),
     }
 
 
@@ -1351,6 +1359,156 @@ async def get_project_snapshot(project_id: str, filename: str, user: str = Depen
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Snapshot file not found")
     return FileResponse(file_path, media_type="image/jpeg")
+
+
+# ==============================================================================
+# OCR STUDIO: PYTORCH CPU 7-SEGMENT CNN TRAINING & LABELING ENDPOINTS
+# ==============================================================================
+
+@app.get("/api/ocr/train/stats")
+async def api_ocr_train_stats(user: str = Depends(require_auth)):
+    """Return current training dataset statistics, class counts (0-9 + blank), and model status."""
+    record_activity()
+    try:
+        stats = await asyncio.to_thread(get_training_dataset_stats)
+        return {"status": "ok", **stats}
+    except Exception as e:
+        logger.error("Error fetching training stats: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/train/label")
+async def api_ocr_train_label(request: Request, user: str = Depends(require_auth)):
+    """
+    Collect and label an ROI crop image with user-entered ground-truth reading (e.g. '14.6' or '14.954').
+    Segments the crop into individual digits and saves them into `<TRAIN_DATA_DIR>/digits/<class>/`.
+    """
+    record_activity()
+    payload = await request.json()
+    label_val = str(payload.get("label", "")).strip()
+    crop_b64 = payload.get("crop_base64", "")
+    image_b64 = payload.get("image_base64", "")
+    box = payload.get("box", {})
+    project_id = str(payload.get("project_id", "manual")).strip() or "manual"
+
+    if not label_val:
+        return JSONResponse({"status": "error", "message": "Please enter the reading value to label (e.g. 14.6)."}, status_code=400)
+
+    pil_crop = None
+    if crop_b64:
+        try:
+            if "," in crop_b64:
+                crop_b64 = crop_b64.split(",", 1)[1]
+            raw_crop = base64.b64decode(crop_b64)
+            pil_crop = Image.open(io.BytesIO(raw_crop)).convert("RGB")
+        except Exception as e:
+            return JSONResponse({"status": "error", "message": f"Invalid crop image data: {e}"}, status_code=400)
+    elif image_b64 and box:
+        try:
+            if "," in image_b64:
+                image_b64 = image_b64.split(",", 1)[1]
+            raw_full = base64.b64decode(image_b64)
+            pil_full = Image.open(io.BytesIO(raw_full)).convert("RGB")
+            pil_crop, _ = await asyncio.to_thread(extract_roi_region, pil_full, box, True)
+        except Exception as e:
+            return JSONResponse({"status": "error", "message": f"Failed to extract ROI from frame: {e}"}, status_code=400)
+
+    if pil_crop is None:
+        return JSONResponse({"status": "error", "message": "No cropped image provided for labeling."}, status_code=400)
+
+    try:
+        res = await asyncio.to_thread(save_labeled_roi_crop, pil_crop, label_val, box, project_id)
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("Error saving labeled ROI crop: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.post("/api/ocr/train/seed_project/{project_id}")
+async def api_ocr_train_seed_project(project_id: str, user: str = Depends(require_auth)):
+    """
+    Bootstrap / collect labeled ROI crops from all snapshots in an existing project
+    (or Proj_Test fallback) so the user can quickly build 20-30 samples per class.
+    """
+    record_activity()
+    proj_dir = resolve_project_dir(project_id)
+    if not proj_dir.is_dir():
+        fallback_test = BASE_DIR.parent / "Proj_Test"
+        if fallback_test.is_dir():
+            proj_dir = fallback_test
+        else:
+            return JSONResponse({"status": "error", "message": f"Project '{project_id}' not found."}, status_code=404)
+
+    def _seed_worker() -> Dict[str, Any]:
+        meta = get_project_metadata(proj_dir)
+        boxes = meta.get("boxes", [])
+        snaps = sorted(list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")), key=lambda p: p.stat().st_mtime)
+        added_frames = 0
+        added_digits = 0
+        for snap_p in snaps:
+            try:
+                pil_im = Image.open(snap_p).convert("RGB")
+            except Exception:
+                continue
+            for b in boxes:
+                ocr_res = perform_display_ocr(pil_im, b, is_single_feed=False)
+                val = ocr_res.get("value")
+                if val is not None and ocr_res.get("crop_bytes"):
+                    cam_t = (b.get("camera_type") or b.get("target") or "").lower()
+                    lbl_t = str(b.get("label", "")).lower()
+                    is_std = (cam_t == "device" or "standard" in lbl_t or "fluke" in lbl_t or "1502" in lbl_t)
+                    val_str = f"{val:.3f}" if is_std else f"{val:.1f}"
+                    try:
+                        crop_im = Image.open(io.BytesIO(ocr_res["crop_bytes"])).convert("RGB")
+                        saved = save_labeled_roi_crop(crop_im, val_str, b, proj_dir.name)
+                        added_frames += 1
+                        added_digits += int(saved.get("digits_saved", 0))
+                    except Exception:
+                        pass
+        return {
+            "status": "ok",
+            "added_frames": added_frames,
+            "added_digits": added_digits,
+            "dataset_stats": get_training_dataset_stats()
+        }
+
+    try:
+        res = await asyncio.to_thread(_seed_worker)
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("Error seeding training data from project %s: %s", project_id, e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.delete("/api/ocr/train/frame/{frame_id}")
+async def api_ocr_train_delete_frame(frame_id: str, user: str = Depends(require_auth)):
+    """Delete a labeled frame and all its segmented digit samples."""
+    record_activity()
+    try:
+        res = await asyncio.to_thread(delete_labeled_frame, frame_id)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/train/run")
+async def api_ocr_train_run(request: Request, user: str = Depends(require_auth)):
+    """
+    Execute CPU training of the 7-Segment PyTorch CNN with augmentation
+    (brightness/contrast jitter, small shifts, shear) and whole-frame holdout validation.
+    """
+    record_activity()
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    try:
+        res = await asyncio.to_thread(train_custom_model, payload)
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("CPU Model Training error: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
 
 
 if __name__ == "__main__":

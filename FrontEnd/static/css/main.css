@@ -3123,6 +3123,30 @@ input[type="number"] {
     transform: translateY(-1px);
 }
 
+.btn-train-models {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #34d399;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(14, 165, 233, 0.22));
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+    transition: var(--transition);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.btn-train-models:hover {
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.45);
+    transform: translateY(-1px);
+    color: #fff;
+}
+
 .ocr-panel-content {
     display: flex;
     flex-direction: column;

@@ -3465,6 +3465,42 @@ async function testBoxOcr(boxId) {
     }
 }
 
+let currentTestBox = null;
+let currentTestCropBase64 = "";
+let currentTrainModalBox = null;
+let currentTrainModalCropBase64 = "";
+
+function renderDigitPreviewsStrip(containerEl, digitPreviews) {
+    if (!containerEl) return;
+    containerEl.innerHTML = "";
+    if (!digitPreviews || !digitPreviews.length) {
+        containerEl.style.display = "none";
+        return;
+    }
+    containerEl.style.display = "flex";
+    const lbl = document.createElement("span");
+    lbl.style.fontSize = "0.72rem";
+    lbl.style.color = "#94a3b8";
+    lbl.textContent = "Segmented Digits:";
+    containerEl.appendChild(lbl);
+
+    digitPreviews.forEach(dp => {
+        const chip = document.createElement("div");
+        chip.style.cssText = "display:inline-flex;align-items:center;gap:4px;background:rgba(2,6,23,0.85);border:1px solid rgba(52,211,153,0.4);border-radius:6px;padding:2px 6px;";
+        if (dp.crop_base64) {
+            const im = document.createElement("img");
+            im.src = dp.crop_base64;
+            im.style.cssText = "height:24px;width:16px;object-fit:contain;border-radius:2px;background:#000;";
+            chip.appendChild(im);
+        }
+        const sp = document.createElement("span");
+        sp.style.cssText = "font-family:monospace;font-weight:800;font-size:0.8rem;color:#34d399;";
+        sp.textContent = dp.digit;
+        chip.appendChild(sp);
+        containerEl.appendChild(chip);
+    });
+}
+
 function showOcrTestResultModal(box, result) {
     const modal = document.getElementById("roiTestResultModal");
     const cropImg = document.getElementById("roiTestCropImg");
@@ -3475,10 +3511,16 @@ function showOcrTestResultModal(box, result) {
     const dispTypeEl = document.getElementById("roiTestDisplayType");
     const statusBadge = document.getElementById("roiTestStatusBadge");
     const statusIcon = document.getElementById("roiTestStatusIcon");
+    const labelInput = document.getElementById("roiTestLabelInput");
+    const savedStatus = document.getElementById("roiTrainSavedStatus");
+    const digitStrip = document.getElementById("roiTestDigitPreviews");
 
     if (!modal) return;
 
-    if (titleEl) titleEl.textContent = `${box.label} — OCR Test`;
+    currentTestBox = box;
+    currentTestCropBase64 = result.crop_base64 || "";
+
+    if (titleEl) titleEl.textContent = `${box.label} — OCR Test & Label`;
     if (subtitleEl) subtitleEl.textContent = `Mode: ${box.mode === "quad" ? "4-Corner Trapezoid Pins (Keystone Deskew)" : "Standard Rectangle Box"}`;
 
     if (cropImg) {
@@ -3495,12 +3537,27 @@ function showOcrTestResultModal(box, result) {
         valBadge.style.color = result.ocr_status === "success" ? "#10b981" : result.ocr_status === "warning" ? "#eab308" : "#ef4444";
     }
 
+    if (labelInput) {
+        labelInput.value = (result.value !== null && result.value !== undefined) ? String(result.value) : "";
+    }
+    if (savedStatus) {
+        savedStatus.textContent = "Fixed decimal by position";
+        savedStatus.style.color = "var(--text-secondary)";
+    }
+    if (digitStrip) {
+        digitStrip.innerHTML = "";
+        digitStrip.style.display = "none";
+    }
+
     if (rawTextEl) rawTextEl.textContent = result.text || "(empty)";
     if (dispTypeEl) {
-        if (result.engine === "onnx_ai") {
-            const confPct = result.confidence ? Math.round(result.confidence * 100) : 95;
-            const modelName = (result.model_version || "PP-OCRv6").toUpperCase();
-            dispTypeEl.textContent = `AI ONNX (${modelName}) [${confPct}%]`;
+        const confPct = result.confidence ? Math.round(result.confidence * 100) : 95;
+        if (result.engine === "pytorch_cnn") {
+            dispTypeEl.textContent = `PyTorch 7-Seg CNN [${confPct}%]`;
+            dispTypeEl.style.color = "#34d399";
+        } else if (result.engine === "openvino_ai" || result.engine === "onnx_ai") {
+            const modelName = (result.model_version || "PP-OCR").toUpperCase();
+            dispTypeEl.textContent = `AI (${modelName}) [${confPct}%]`;
             dispTypeEl.style.color = "#10b981";
         } else if (result.engine === "tesseract_fallback") {
             dispTypeEl.textContent = "Tesseract (7-Segment Fallback)";
@@ -3513,7 +3570,11 @@ function showOcrTestResultModal(box, result) {
 
     if (statusBadge) {
         if (result.ocr_status === "success") {
-            statusBadge.textContent = result.engine === "onnx_ai" ? "✓ AI Model Verified" : "✓ High Confidence Recognized";
+            statusBadge.textContent = result.engine === "pytorch_cnn"
+                ? "✓ Custom Trained CNN Verified"
+                : (result.engine === "onnx_ai" || result.engine === "openvino_ai")
+                    ? "✓ AI Model Verified"
+                    : "✓ High Confidence Recognized";
             statusBadge.style.background = "rgba(16, 185, 129, 0.2)";
             statusBadge.style.color = "#10b981";
         } else if (result.ocr_status === "warning") {
@@ -3535,12 +3596,372 @@ function showOcrTestResultModal(box, result) {
     modal.classList.add("active");
 }
 
-// Close handlers for Test Result Modal
+async function handleSaveLabelFromTestModal() {
+    const labelInput = document.getElementById("roiTestLabelInput");
+    const savedStatus = document.getElementById("roiTrainSavedStatus");
+    const digitStrip = document.getElementById("roiTestDigitPreviews");
+    const btnSave = document.getElementById("btnSaveRoiLabel");
+
+    const valStr = (labelInput?.value || "").trim();
+    if (!valStr) {
+        showToast("Please enter the actual reading value (e.g. 14.6 or 14.954) to label.");
+        labelInput?.focus();
+        return;
+    }
+    if (!currentTestCropBase64) {
+        showToast("No ROI crop image available to label.");
+        return;
+    }
+
+    if (btnSave) btnSave.disabled = true;
+    try {
+        const res = await fetch("/api/ocr/train/label", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                crop_base64: currentTestCropBase64,
+                label: valStr,
+                box: currentTestBox || {},
+                project_id: ocrStudioState.activeProjectId || "manual"
+            })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+            if (savedStatus) {
+                savedStatus.textContent = `✓ Saved ${data.digits_saved} digits (${valStr})`;
+                savedStatus.style.color = "#34d399";
+            }
+            renderDigitPreviewsStrip(digitStrip, data.digit_previews || []);
+            showToast(`🎓 Labeled "${valStr}" (${data.digits_saved} digits saved to training set)`);
+        } else {
+            showToast("❌ Label Error: " + (data.message || "Failed to save label"));
+        }
+    } catch (e) {
+        showToast("Network error saving label: " + e.message);
+    } finally {
+        if (btnSave) btnSave.disabled = false;
+    }
+}
+
+// Close & Action handlers for Test Result Modal
 document.getElementById("btnCloseRoiTestModal")?.addEventListener("click", () => {
     document.getElementById("roiTestResultModal")?.classList.remove("active");
 });
 document.getElementById("btnOkRoiTestModal")?.addEventListener("click", () => {
     document.getElementById("roiTestResultModal")?.classList.remove("active");
+});
+document.getElementById("btnSaveRoiLabel")?.addEventListener("click", handleSaveLabelFromTestModal);
+document.getElementById("roiTestLabelInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        e.preventDefault();
+        handleSaveLabelFromTestModal();
+    }
+});
+document.getElementById("btnOpenTrainFromTest")?.addEventListener("click", () => {
+    document.getElementById("roiTestResultModal")?.classList.remove("active");
+    openOcrTrainModal();
+});
+
+// ==========================================================================
+// PYTORCH CPU 7-SEGMENT CNN TRAINING STUDIO MODAL LOGIC
+// ==========================================================================
+
+async function refreshTrainStatsUI() {
+    try {
+        const res = await fetch("/api/ocr/train/stats");
+        const data = await res.json();
+        if (data.status !== "ok") return;
+
+        const statusBadge = document.getElementById("trainModelStatusBadge");
+        const valAccBadge = document.getElementById("trainValAccBadge");
+        const samplesBadge = document.getElementById("trainTotalSamplesBadge");
+        const classesText = document.getElementById("trainClassesListText");
+        const classGrid = document.getElementById("trainClassCountsGrid");
+        const recentList = document.getElementById("trainRecentFramesList");
+        const misSection = document.getElementById("trainMisclassifiedSection");
+        const misList = document.getElementById("trainMisclassifiedList");
+
+        if (samplesBadge) {
+            samplesBadge.textContent = `${data.total_frames || 0} frames (${data.total_samples || 0} digits)`;
+        }
+
+        if (data.model_trained && data.model_info) {
+            const mi = data.model_info;
+            if (statusBadge) {
+                statusBadge.textContent = `✓ Trained (${mi.trained_at || "Active"})`;
+                statusBadge.style.color = "#34d399";
+            }
+            if (valAccBadge) {
+                valAccBadge.textContent = `${mi.val_accuracy !== undefined ? mi.val_accuracy : "--"}%`;
+                valAccBadge.style.color = (mi.val_accuracy >= 98) ? "#34d399" : "#eab308";
+            }
+            if (classesText && mi.classes) {
+                classesText.textContent = JSON.stringify(mi.classes);
+            }
+            if (misSection && misList) {
+                const misItems = mi.misclassified || [];
+                if (misItems.length > 0) {
+                    misSection.style.display = "flex";
+                    misList.innerHTML = "";
+                    misItems.forEach(m => {
+                        const card = document.createElement("div");
+                        card.style.cssText = "min-width:92px;background:rgba(2,6,23,0.85);border:1px solid rgba(248,113,113,0.4);border-radius:6px;padding:5px;display:flex;flex-direction:column;align-items:center;gap:3px;";
+                        if (m.crop_base64) {
+                            const im = document.createElement("img");
+                            im.src = m.crop_base64;
+                            im.style.cssText = "height:32px;width:22px;object-fit:contain;background:#000;border-radius:3px;";
+                            card.appendChild(im);
+                        }
+                        const info = document.createElement("div");
+                        info.style.cssText = "font-size:0.68rem;font-family:monospace;color:#fca5a5;";
+                        info.textContent = `True:${m.true_class} Pred:${m.pred_class}`;
+                        card.appendChild(info);
+                        misList.appendChild(card);
+                    });
+                } else {
+                    misSection.style.display = "none";
+                }
+            }
+        } else {
+            if (statusBadge) {
+                statusBadge.textContent = "Ready to Train";
+                statusBadge.style.color = "#eab308";
+            }
+            if (valAccBadge) valAccBadge.textContent = "-- %";
+        }
+
+        // Sync .env defaults into inputs if not focused
+        if (data.config) {
+            const epIn = document.getElementById("trainEpochsInput");
+            const bsIn = document.getElementById("trainBatchInput");
+            const thIn = document.getElementById("trainThreadsInput");
+            const hoIn = document.getElementById("trainHoldOutFramesCheck");
+            if (epIn && document.activeElement !== epIn) epIn.value = data.config.train_epochs || 35;
+            if (bsIn && document.activeElement !== bsIn) bsIn.value = data.config.train_batch_size || 32;
+            if (thIn && document.activeElement !== thIn) thIn.value = data.config.train_cpu_threads || 6;
+            if (hoIn && document.activeElement !== hoIn) hoIn.checked = !!data.config.train_hold_out_frames;
+        }
+
+        // Render per-class sample counts (0-9 + blank)
+        if (classGrid && data.class_counts) {
+            classGrid.innerHTML = "";
+            const keys = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "blank"];
+            keys.forEach(k => {
+                const cnt = data.class_counts[k] || 0;
+                const cell = document.createElement("div");
+                const borderCol = cnt >= 20 ? "rgba(52,211,153,0.5)" : cnt > 0 ? "rgba(56,189,248,0.4)" : "rgba(255,255,255,0.1)";
+                cell.style.cssText = `background:rgba(2,6,23,0.75);border:1px solid ${borderCol};border-radius:6px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;`;
+                cell.innerHTML = `<span style="font-size:0.68rem;color:#94a3b8;font-family:monospace;">${k === "blank" ? "BLK" : k}</span><strong style="font-size:0.84rem;color:${cnt >= 20 ? "#34d399" : cnt > 0 ? "#38bdf8" : "#64748b"};">${cnt}</strong>`;
+                classGrid.appendChild(cell);
+            });
+        }
+
+        // Render recent labeled frames
+        if (recentList) {
+            recentList.innerHTML = "";
+            const frames = data.recent_frames || [];
+            if (frames.length === 0) {
+                recentList.innerHTML = `<div style="font-size:0.75rem;color:var(--text-secondary);padding:6px;">No labeled ROI crops yet. Use <strong>Test</strong> on any ROI box, or click <strong>⚡ Auto-Collect from Project Snapshots</strong> above.</div>`;
+            } else {
+                frames.slice(0, 12).forEach(fr => {
+                    const row = document.createElement("div");
+                    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(2,6,23,0.65);border:1px solid rgba(255,255,255,0.07);border-radius:6px;padding:5px 8px;";
+                    const left = document.createElement("div");
+                    left.style.cssText = "display:flex;align-items:center;gap:8px;";
+                    if (fr.crop_base64) {
+                        const im = document.createElement("img");
+                        im.src = fr.crop_base64;
+                        im.style.cssText = "height:28px;width:64px;object-fit:contain;background:#000;border-radius:4px;";
+                        left.appendChild(im);
+                    }
+                    const txt = document.createElement("div");
+                    txt.innerHTML = `<div style="font-size:0.78rem;font-weight:700;color:#34d399;font-family:monospace;">${fr.label_reading} <span style="font-weight:400;color:#94a3b8;font-size:0.7rem;">(${fr.box_label || "ROI"})</span></div>`;
+                    left.appendChild(txt);
+                    row.appendChild(left);
+
+                    const delBtn = document.createElement("button");
+                    delBtn.type = "button";
+                    delBtn.textContent = "✕";
+                    delBtn.title = "Delete this frame and its digits";
+                    delBtn.style.cssText = "background:rgba(239,68,68,0.18);color:#f87171;border:1px solid rgba(239,68,68,0.35);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:0.72rem;";
+                    delBtn.addEventListener("click", async () => {
+                        await fetch(`/api/ocr/train/frame/${fr.frame_id}`, { method: "DELETE" });
+                        refreshTrainStatsUI();
+                    });
+                    row.appendChild(delBtn);
+                    recentList.appendChild(row);
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to load training stats:", e);
+    }
+}
+
+function openOcrTrainModal() {
+    const modal = document.getElementById("ocrTrainModal");
+    if (!modal) return;
+
+    // Populate ROI box selector from active project
+    const select = document.getElementById("trainRoiBoxSelect");
+    if (select) {
+        select.innerHTML = "";
+        if (ocrStudioState.boxes && ocrStudioState.boxes.length > 0) {
+            ocrStudioState.boxes.forEach(b => {
+                const opt = document.createElement("option");
+                opt.value = b.id;
+                opt.textContent = `${b.label} (${b.camera_type === "device" ? "Device Cam" : "Chamber Cam"})`;
+                select.appendChild(opt);
+            });
+        } else {
+            const opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "-- Select an Active Project with ROI Boxes --";
+            select.appendChild(opt);
+        }
+    }
+
+    modal.classList.add("active");
+    refreshTrainStatsUI();
+}
+
+document.getElementById("btnOpenTrainModal")?.addEventListener("click", openOcrTrainModal);
+document.getElementById("btnCloseTrainModal")?.addEventListener("click", () => {
+    document.getElementById("ocrTrainModal")?.classList.remove("active");
+});
+document.getElementById("btnCancelTrainModal")?.addEventListener("click", () => {
+    document.getElementById("ocrTrainModal")?.classList.remove("active");
+});
+
+document.getElementById("btnTrainGrabRoiCrop")?.addEventListener("click", async () => {
+    const select = document.getElementById("trainRoiBoxSelect");
+    const boxId = select?.value;
+    const box = ocrStudioState.boxes.find(b => b.id === boxId);
+    if (!box || !ocrStudioState.activeProjectId) {
+        showToast("Please select an Active Project and ROI box first.");
+        return;
+    }
+    try {
+        const res = await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/test_box`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ box })
+        });
+        const data = await res.json();
+        if (data.status === "ok" && data.crop_base64) {
+            currentTrainModalBox = box;
+            currentTrainModalCropBase64 = data.crop_base64;
+            const wrap = document.getElementById("trainLiveCropContainer");
+            const img = document.getElementById("trainLiveCropImg");
+            const inp = document.getElementById("trainModalLabelInput");
+            const strip = document.getElementById("trainModalDigitStrip");
+            if (wrap) wrap.style.display = "flex";
+            if (img) img.src = data.crop_base64;
+            if (inp) {
+                inp.value = (data.value !== null && data.value !== undefined) ? String(data.value) : "";
+                inp.focus();
+            }
+            if (strip) strip.innerHTML = "";
+        } else {
+            showToast("Could not crop ROI: " + (data.message || "No snapshot/camera available"));
+        }
+    } catch (e) {
+        showToast("Error grabbing ROI crop: " + e.message);
+    }
+});
+
+document.getElementById("btnTrainModalSaveLabel")?.addEventListener("click", async () => {
+    const inp = document.getElementById("trainModalLabelInput");
+    const strip = document.getElementById("trainModalDigitStrip");
+    const valStr = (inp?.value || "").trim();
+    if (!valStr || !currentTrainModalCropBase64) {
+        showToast("Please crop an ROI and enter its reading value first.");
+        return;
+    }
+    try {
+        const res = await fetch("/api/ocr/train/label", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                crop_base64: currentTrainModalCropBase64,
+                label: valStr,
+                box: currentTrainModalBox || {},
+                project_id: ocrStudioState.activeProjectId || "manual"
+            })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+            renderDigitPreviewsStrip(strip, data.digit_previews || []);
+            showToast(`🎓 Saved "${valStr}" (${data.digits_saved} digits) to training dataset!`);
+            refreshTrainStatsUI();
+        } else {
+            showToast("❌ " + (data.message || "Failed to save label"));
+        }
+    } catch (e) {
+        showToast("Error saving label: " + e.message);
+    }
+});
+
+document.getElementById("btnSeedFromProject")?.addEventListener("click", async () => {
+    const projId = ocrStudioState.activeProjectId || "Proj_Test";
+    const btn = document.getElementById("btnSeedFromProject");
+    if (btn) btn.disabled = true;
+    showToast(`⚡ Auto-collecting & labeling ROI crops from project "${projId}"...`);
+    try {
+        const res = await fetch(`/api/ocr/train/seed_project/${projId}`, { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+            showToast(`✅ Collected ${data.added_frames} ROI crops (${data.added_digits} digits)!`);
+            refreshTrainStatsUI();
+        } else {
+            showToast("⚠️ " + (data.message || "Could not seed from project"));
+        }
+    } catch (e) {
+        showToast("Error seeding project data: " + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+});
+
+document.getElementById("btnStartCpuTraining")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btnStartCpuTraining");
+    const txt = document.getElementById("trainSubmitText");
+    const spin = document.getElementById("trainSpinner");
+
+    const epochs = parseInt(document.getElementById("trainEpochsInput")?.value || "35", 10);
+    const batchSize = parseInt(document.getElementById("trainBatchInput")?.value || "32", 10);
+    const threads = parseInt(document.getElementById("trainThreadsInput")?.value || "6", 10);
+    const holdOut = !!document.getElementById("trainHoldOutFramesCheck")?.checked;
+
+    if (btn) btn.disabled = true;
+    if (txt) txt.textContent = "Training CNN on CPU...";
+    if (spin) spin.style.display = "inline-block";
+
+    try {
+        const res = await fetch("/api/ocr/train/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                train_epochs: epochs,
+                train_batch_size: batchSize,
+                train_cpu_threads: threads,
+                train_hold_out_frames: holdOut
+            })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+            showToast(`🎉 CPU Training Complete! Val Accuracy: ${data.val_accuracy}% (${data.elapsed_sec}s)`);
+            await refreshTrainStatsUI();
+        } else {
+            showToast("❌ Training Error: " + (data.message || "Failed to train"));
+        }
+    } catch (e) {
+        showToast("Network error during training: " + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+        if (txt) txt.textContent = "🚀 Run CPU Training Now";
+        if (spin) spin.style.display = "none";
+    }
 });
 
 function updateActiveRoiVisuals(box) {

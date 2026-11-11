@@ -147,10 +147,10 @@ class OnnxOcrEngine:
             self._ensure_models_exist(v4_rec_path, v4_keys_path)
 
         try:
-            # Scale threads automatically for high-core servers (e.g. 96x Intel Xeon Gold 5220R -> 16 threads per session)
+            # At inference time, run intra_op_num_threads=1 per worker (configurable via INFERENCE_INTRA_OP_THREADS / ONNX_CPU_THREADS in .env)
             total_cores = os.cpu_count() or 4
-            default_threads = min(24, max(4, total_cores // 4)) if total_cores >= 16 else min(8, max(2, total_cores))
-            cpu_threads = int(os.environ.get("ONNX_CPU_THREADS", str(default_threads)))
+            intra_env = os.environ.get("INFERENCE_INTRA_OP_THREADS", os.environ.get("ONNX_CPU_THREADS", "1"))
+            cpu_threads = int(intra_env)
             cpu_threads = max(1, min(total_cores, cpu_threads))
 
             ov_core = ov.Core() if (HAS_OPENVINO and ov is not None) else None
@@ -409,7 +409,8 @@ class OnnxOcrEngine:
                 if "v4" in self.rec_models:
                     for sc in (1.0, 0.88):
                         s, c = self._run_single_rec("v4", raw_arr, sc=sc)
-                        if s and c >= 0.82 and extract_thermometer_value(s, box=box) is not None:
+                        val = extract_thermometer_value(s, box=box) if s else None
+                        if s and c >= 0.82 and val is not None and (-40.0 <= val <= 65.0):
                             return s, c
 
                 # 2. Full Ensemble Fallback across all loaded models & scales
@@ -421,7 +422,8 @@ class OnnxOcrEngine:
                         s, c = self._run_single_rec(m_key, raw_arr, sc=sc)
                         if s:
                             val = extract_thermometer_value(s, box=box)
-                            score = c + (0.35 if val is not None else 0.0) + (0.15 if m_key == "v4" else 0.0)
+                            plausible = 0.25 if (val is not None and -40.0 <= val <= 65.0) else 0.0
+                            score = c + (0.35 if val is not None else 0.0) + (0.15 if m_key == "v4" else 0.0) + plausible
                             lcd_candidates.append((score, s, c))
                 if lcd_candidates:
                     lcd_candidates.sort(key=lambda x: x[0], reverse=True)
@@ -1623,6 +1625,16 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
     thumb_img.save(thumb_buf, format="JPEG", quality=92)
     crop_bytes = thumb_buf.getvalue()
 
+    # --- CUSTOM TRAINED PYTORCH 7-SEGMENT CNN (IF TRAINED & ENABLED) ---
+    cnn_text, cnn_val, cnn_conf = "", None, 0.0
+    try:
+        from ocr_trainer import custom_cnn_engine, get_train_config
+        train_cfg = get_train_config()
+        if train_cfg.get("enable_custom_cnn", True):
+            cnn_text, cnn_val, cnn_conf = custom_cnn_engine.recognize(crop, box=box)
+    except Exception as ex:
+        logger.debug("[Custom CNN] Inference notice: %s", ex)
+
     # --- PRIMARY ENGINE: OPENVINO / ONNX AI OCR ENSEMBLE ---
     onnx_text = ""
     onnx_val = None
@@ -1677,6 +1689,25 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
                 alt_val = extract_thermometer_value(alt_text, box=box) if alt_text else None
                 if alt_val is not None and (onnx_val is None or alt_conf > onnx_conf):
                     onnx_text, onnx_conf, onnx_val = alt_text, alt_conf, alt_val
+
+    # Fuse Custom Trained PyTorch CNN with OpenVINO/ONNX Ensemble
+    cnn_thresh = float(os.environ.get("CUSTOM_CNN_CONF_THRESHOLD", "0.85"))
+    onnx_plausible = (onnx_val is not None and -40.0 <= onnx_val <= 65.0)
+    cnn_plausible = (cnn_val is not None and -40.0 <= cnn_val <= 65.0)
+    if cnn_val is not None and (cnn_conf >= cnn_thresh or (cnn_plausible and not onnx_plausible and cnn_conf >= 0.55)):
+        if onnx_val is None or not onnx_plausible or abs(cnn_val - onnx_val) < 1e-3 or cnn_conf >= (onnx_conf - 0.02):
+            best_conf = max(cnn_conf, onnx_conf) if (onnx_val is not None and abs(cnn_val - onnx_val) < 1e-3) else cnn_conf
+            logger.info("[OCR Engine] Custom PyTorch CNN recognized reading: %s -> %.3f (conf: %.2f)", cnn_text, cnn_val, best_conf)
+            return {
+                "text": cnn_text,
+                "value": cnn_val,
+                "status": "success",
+                "confidence": round(best_conf, 3),
+                "engine": "pytorch_cnn",
+                "model_version": "Custom PyTorch 7-Seg CNN",
+                "display_type": "pytorch_cnn",
+                "crop_bytes": crop_bytes
+            }
 
     # If OpenVINO / ONNX AI produced a confident valid numeric reading, return immediately!
     if onnx_val is not None and onnx_conf >= 0.40:
