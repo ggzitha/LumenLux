@@ -3666,6 +3666,24 @@ document.getElementById("btnOpenTrainFromTest")?.addEventListener("click", () =>
 // PYTORCH CPU 7-SEGMENT CNN TRAINING STUDIO MODAL LOGIC
 // ==========================================================================
 
+let trainStudioCustomFiles = []; // [{filename, image_base64}] from local folder/file upload
+let trainStudioProjectsCache = [];
+let trainStudioCurrentProject = null;
+
+function formatLearnedDecimalsSummary(learned) {
+    if (!learned) return "Auto from labels";
+    const byLbl = learned.by_box_label || {};
+    const byCnt = learned.by_digit_count || {};
+    const parts = [];
+    Object.keys(byLbl).forEach(lbl => {
+        const info = byLbl[lbl];
+        parts.push(`${lbl}: ${info.num_digits}d (${info.decimals} dec)`);
+    });
+    if (parts.length > 0) return parts.slice(0, 3).join(" | ");
+    const cntParts = Object.keys(byCnt).map(n => `${n}-dig→${byCnt[n]}dec`);
+    return cntParts.length > 0 ? cntParts.join(", ") : "Auto from labels";
+}
+
 async function refreshTrainStatsUI() {
     try {
         const res = await fetch("/api/ocr/train/stats");
@@ -3675,14 +3693,21 @@ async function refreshTrainStatsUI() {
         const statusBadge = document.getElementById("trainModelStatusBadge");
         const valAccBadge = document.getElementById("trainValAccBadge");
         const samplesBadge = document.getElementById("trainTotalSamplesBadge");
+        const learnedBadge = document.getElementById("trainLearnedDecimalsBadge");
         const classesText = document.getElementById("trainClassesListText");
         const classGrid = document.getElementById("trainClassCountsGrid");
+        const confSummary = document.getElementById("trainConfusionPairsSummary");
         const recentList = document.getElementById("trainRecentFramesList");
         const misSection = document.getElementById("trainMisclassifiedSection");
         const misList = document.getElementById("trainMisclassifiedList");
+        const hardSection = document.getElementById("trainHardExamplesSection");
+        const hardList = document.getElementById("trainHardExamplesList");
 
         if (samplesBadge) {
             samplesBadge.textContent = `${data.total_frames || 0} frames (${data.total_samples || 0} digits)`;
+        }
+        if (learnedBadge) {
+            learnedBadge.textContent = formatLearnedDecimalsSummary(data.learned_profiles);
         }
 
         if (data.model_trained && data.model_info) {
@@ -3692,11 +3717,18 @@ async function refreshTrainStatsUI() {
                 statusBadge.style.color = "#34d399";
             }
             if (valAccBadge) {
-                valAccBadge.textContent = `${mi.val_accuracy !== undefined ? mi.val_accuracy : "--"}%`;
-                valAccBadge.style.color = (mi.val_accuracy >= 98) ? "#34d399" : "#eab308";
+                const dAcc = mi.val_accuracy !== undefined ? mi.val_accuracy : "--";
+                const rAcc = mi.val_reading_accuracy !== undefined ? mi.val_reading_accuracy : dAcc;
+                valAccBadge.textContent = `${dAcc}% / ${rAcc}%`;
+                valAccBadge.style.color = (dAcc >= 98) ? "#34d399" : "#eab308";
             }
             if (classesText && mi.classes) {
                 classesText.textContent = JSON.stringify(mi.classes);
+            }
+            if (confSummary && mi.confusion_pairs) {
+                const cp = mi.confusion_pairs;
+                const pairsStr = Object.keys(cp).map(k => `${k}:${cp[k]}`).join(" · ");
+                confSummary.innerHTML = `Confusions (${pairsStr})`;
             }
             if (misSection && misList) {
                 const misItems = mi.misclassified || [];
@@ -3727,7 +3759,7 @@ async function refreshTrainStatsUI() {
                 statusBadge.textContent = "Ready to Train";
                 statusBadge.style.color = "#eab308";
             }
-            if (valAccBadge) valAccBadge.textContent = "-- %";
+            if (valAccBadge) valAccBadge.textContent = "-- % / -- %";
         }
 
         // Sync .env defaults into inputs if not focused
@@ -3736,10 +3768,12 @@ async function refreshTrainStatsUI() {
             const bsIn = document.getElementById("trainBatchInput");
             const thIn = document.getElementById("trainThreadsInput");
             const hoIn = document.getElementById("trainHoldOutFramesCheck");
+            const syIn = document.getElementById("trainUseSyntheticCheck");
             if (epIn && document.activeElement !== epIn) epIn.value = data.config.train_epochs || 35;
             if (bsIn && document.activeElement !== bsIn) bsIn.value = data.config.train_batch_size || 32;
             if (thIn && document.activeElement !== thIn) thIn.value = data.config.train_cpu_threads || 6;
             if (hoIn && document.activeElement !== hoIn) hoIn.checked = !!data.config.train_hold_out_frames;
+            if (syIn && document.activeElement !== syIn) syIn.checked = data.config.use_synthetic !== false;
         }
 
         // Render per-class sample counts (0-9 + blank)
@@ -3756,12 +3790,88 @@ async function refreshTrainStatsUI() {
             });
         }
 
+        // Render Hard-Example Mining Queue (confidence < 0.90 or reader disagreement)
+        if (hardSection && hardList) {
+            const hItems = data.hard_examples || [];
+            if (hItems.length > 0) {
+                hardSection.style.display = "flex";
+                hardList.innerHTML = "";
+                hItems.slice(0, 10).forEach(he => {
+                    const row = document.createElement("div");
+                    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(2,6,23,0.75);border:1px solid rgba(251,191,36,0.3);border-radius:6px;padding:5px 8px;flex-wrap:wrap;";
+                    const left = document.createElement("div");
+                    left.style.cssText = "display:flex;align-items:center;gap:8px;";
+                    if (he.crop_base64) {
+                        const im = document.createElement("img");
+                        im.src = he.crop_base64;
+                        im.style.cssText = "height:32px;width:72px;object-fit:contain;background:#000;border-radius:4px;";
+                        left.appendChild(im);
+                    }
+                    const meta = document.createElement("div");
+                    meta.innerHTML = `<div style="font-size:0.74rem;color:#fbbf24;font-weight:700;">${he.box_label || "Display"} <span style="font-weight:400;color:#94a3b8;font-size:0.68rem;">(conf: ${he.confidence})</span></div><div style="font-size:0.66rem;color:#cbd5e1;">${he.reason || "Needs verification"}</div>`;
+                    left.appendChild(meta);
+                    row.appendChild(left);
+
+                    const right = document.createElement("div");
+                    right.style.cssText = "display:flex;align-items:center;gap:5px;";
+                    const inp = document.createElement("input");
+                    inp.type = "text";
+                    inp.className = "ocr-input";
+                    inp.value = he.pred_text && !String(he.pred_text).includes("vs") ? he.pred_text : "";
+                    inp.placeholder = "Reading...";
+                    inp.style.cssText = "width:82px;padding:4px 7px;font-size:0.76rem;font-family:monospace;font-weight:700;";
+                    const saveBtn = document.createElement("button");
+                    saveBtn.type = "button";
+                    saveBtn.className = "btn-ocr-submit";
+                    saveBtn.textContent = "+ Label";
+                    saveBtn.style.cssText = "padding:4px 8px;font-size:0.72rem;";
+                    saveBtn.addEventListener("click", async () => {
+                        const val = inp.value.trim();
+                        if (!val) {
+                            showToast("Enter the true reading first.");
+                            return;
+                        }
+                        const r = await fetch("/api/ocr/train/label", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                crop_base64: he.crop_base64,
+                                label: val,
+                                box: he.box || { label: he.box_label },
+                                project_id: ocrStudioState.activeProjectId || "hard_mined"
+                            })
+                        });
+                        if (r.ok) {
+                            await fetch(`/api/ocr/train/hard_example/${he.hard_id}`, { method: "DELETE" });
+                            showToast(`🎓 Labeled hard example "${val}"!`);
+                            refreshTrainStatsUI();
+                        }
+                    });
+                    const delBtn = document.createElement("button");
+                    delBtn.type = "button";
+                    delBtn.textContent = "✕";
+                    delBtn.style.cssText = "background:rgba(239,68,68,0.18);color:#f87171;border:1px solid rgba(239,68,68,0.35);border-radius:5px;padding:3px 7px;cursor:pointer;font-size:0.72rem;";
+                    delBtn.addEventListener("click", async () => {
+                        await fetch(`/api/ocr/train/hard_example/${he.hard_id}`, { method: "DELETE" });
+                        refreshTrainStatsUI();
+                    });
+                    right.appendChild(inp);
+                    right.appendChild(saveBtn);
+                    right.appendChild(delBtn);
+                    row.appendChild(right);
+                    hardList.appendChild(row);
+                });
+            } else {
+                hardSection.style.display = "none";
+            }
+        }
+
         // Render recent labeled frames
         if (recentList) {
             recentList.innerHTML = "";
             const frames = data.recent_frames || [];
             if (frames.length === 0) {
-                recentList.innerHTML = `<div style="font-size:0.75rem;color:var(--text-secondary);padding:6px;">No labeled ROI crops yet. Use <strong>Test</strong> on any ROI box, or click <strong>⚡ Auto-Collect from Project Snapshots</strong> above.</div>`;
+                recentList.innerHTML = `<div style="font-size:0.75rem;color:var(--text-secondary);padding:6px;">No labeled ROI crops yet. Pick a Display above, select snapshots, click <strong>✂️ Auto-Crop Selected Snapshots</strong>, and type readings!</div>`;
             } else {
                 frames.slice(0, 12).forEach(fr => {
                     const row = document.createElement("div");
@@ -3774,8 +3884,10 @@ async function refreshTrainStatsUI() {
                         im.style.cssText = "height:28px;width:64px;object-fit:contain;background:#000;border-radius:4px;";
                         left.appendChild(im);
                     }
+                    const decInfo = fr.decimal_places !== undefined ? ` · ${fr.decimal_places} dec` : "";
+                    const snapInfo = fr.snapshot_name ? ` · ${fr.snapshot_name}` : "";
                     const txt = document.createElement("div");
-                    txt.innerHTML = `<div style="font-size:0.78rem;font-weight:700;color:#34d399;font-family:monospace;">${fr.label_reading} <span style="font-weight:400;color:#94a3b8;font-size:0.7rem;">(${fr.box_label || "ROI"})</span></div>`;
+                    txt.innerHTML = `<div style="font-size:0.78rem;font-weight:700;color:#34d399;font-family:monospace;">${fr.label_reading} <span style="font-weight:400;color:#94a3b8;font-size:0.69rem;">(${fr.box_label || "ROI"}${decInfo}${snapInfo})</span></div>`;
                     left.appendChild(txt);
                     row.appendChild(left);
 
@@ -3798,31 +3910,315 @@ async function refreshTrainStatsUI() {
     }
 }
 
-function openOcrTrainModal() {
-    const modal = document.getElementById("ocrTrainModal");
-    if (!modal) return;
+function updateSelectedSnapshotsSummary() {
+    const checklist = document.getElementById("trainSnapshotsChecklist");
+    const summary = document.getElementById("trainSelectedSnapsSummary");
+    const btnText = document.getElementById("btnTrainBatchCropText");
+    if (!checklist) return;
+    const allChecks = Array.from(checklist.querySelectorAll("input.train-snap-check"));
+    const checked = allChecks.filter(c => c.checked);
+    const customCnt = trainStudioCustomFiles.length;
+    const totalSel = checked.length + customCnt;
+    if (summary) {
+        summary.textContent = `${checked.length} of ${allChecks.length} project snapshots selected${customCnt > 0 ? ` (+${customCnt} uploaded files)` : ""}`;
+    }
+    if (btnText) {
+        btnText.textContent = `✂️ Auto-Crop Selected Snapshots (${totalSel})`;
+    }
+}
 
-    // Populate ROI box selector from active project
-    const select = document.getElementById("trainRoiBoxSelect");
-    if (select) {
-        select.innerHTML = "";
-        if (ocrStudioState.boxes && ocrStudioState.boxes.length > 0) {
-            ocrStudioState.boxes.forEach(b => {
-                const opt = document.createElement("option");
-                opt.value = b.id;
-                opt.textContent = `${b.label} (${b.camera_type === "device" ? "Device Cam" : "Chamber Cam"})`;
-                select.appendChild(opt);
-            });
-        } else {
-            const opt = document.createElement("option");
-            opt.value = "";
-            opt.textContent = "-- Select an Active Project with ROI Boxes --";
-            select.appendChild(opt);
-        }
+function renderTrainSnapshotsChecklist(snapshotsList) {
+    const checklist = document.getElementById("trainSnapshotsChecklist");
+    const countLabel = document.getElementById("trainSnapCountLabel");
+    const filterVal = (document.getElementById("trainSnapFilterInput")?.value || "").trim().toLowerCase();
+    if (!checklist) return;
+
+    const snaps = Array.isArray(snapshotsList) ? snapshotsList : [];
+    if (countLabel) {
+        countLabel.textContent = `Available Snapshots (${snaps.length}${trainStudioCustomFiles.length ? ` + ${trainStudioCustomFiles.length} local` : ""}):`;
     }
 
+    checklist.innerHTML = "";
+    if (snaps.length === 0 && trainStudioCustomFiles.length === 0) {
+        checklist.innerHTML = `<div style="font-size:0.73rem;color:var(--text-secondary);grid-column:1/-1;padding:4px;">No snapshots in this project yet. Capture snapshots with "Catch It!" or click "📁 Add Folder/Images" above.</div>`;
+        updateSelectedSnapshotsSummary();
+        return;
+    }
+
+    snaps.forEach((fname, idx) => {
+        if (filterVal && !fname.toLowerCase().includes(filterVal) && !String(idx + 1).includes(filterVal)) {
+            return;
+        }
+        const lbl = document.createElement("label");
+        lbl.style.cssText = "display:flex;align-items:center;gap:5px;font-size:0.71rem;color:#cbd5e1;background:rgba(15,23,42,0.8);border:1px solid rgba(255,255,255,0.06);border-radius:5px;padding:3px 6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+        lbl.title = `#${idx + 1}: ${fname}`;
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "train-snap-check";
+        cb.value = fname;
+        cb.dataset.snapIndex = String(idx + 1);
+        cb.checked = true;
+        cb.addEventListener("change", updateSelectedSnapshotsSummary);
+        const span = document.createElement("span");
+        span.style.cssText = "overflow:hidden;text-overflow:ellipsis;";
+        span.innerHTML = `<strong style="color:#38bdf8;font-family:monospace;">#${idx + 1}</strong> ${fname}`;
+        lbl.appendChild(cb);
+        lbl.appendChild(span);
+        checklist.appendChild(lbl);
+    });
+
+    updateSelectedSnapshotsSummary();
+}
+
+async function loadProjectIntoTrainModal(projectId, autoCropOnLoad = false) {
+    if (!projectId) return;
+    try {
+        const res = await fetch(`/api/ocr/projects/${projectId}`);
+        const data = await res.json();
+        const proj = data.project || data;
+        trainStudioCurrentProject = proj;
+
+        const boxSelect = document.getElementById("trainRoiBoxSelect");
+        if (boxSelect) {
+            const prevVal = boxSelect.value;
+            boxSelect.innerHTML = "";
+            const boxes = Array.isArray(proj.boxes) && proj.boxes.length > 0 ? proj.boxes : (ocrStudioState.boxes || []);
+            if (boxes.length > 0) {
+                boxes.forEach(b => {
+                    const opt = document.createElement("option");
+                    opt.value = b.id;
+                    const decStr = b.decimals !== undefined ? `, ${b.decimals} dec` : "";
+                    opt.textContent = `${b.label} (${b.camera_type === "device" || b.target === "device" ? "Device Cam" : "Chamber Cam"}${decStr})`;
+                    boxSelect.appendChild(opt);
+                });
+                if (prevVal && boxes.some(b => b.id === prevVal)) {
+                    boxSelect.value = prevVal;
+                }
+            } else {
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.textContent = "-- No ROI Boxes in Project --";
+                boxSelect.appendChild(opt);
+            }
+        }
+
+        renderTrainSnapshotsChecklist(proj.snapshots || []);
+        if (autoCropOnLoad && (proj.snapshots?.length > 0 || trainStudioCustomFiles.length > 0)) {
+            await handleBatchCropSelectedSnapshots();
+        }
+    } catch (e) {
+        console.warn("Could not load project for training modal:", e);
+    }
+}
+
+async function openOcrTrainModal() {
+    const modal = document.getElementById("ocrTrainModal");
+    if (!modal) return;
     modal.classList.add("active");
     refreshTrainStatsUI();
+
+    try {
+        const res = await fetch("/api/ocr/projects");
+        const data = await res.json();
+        trainStudioProjectsCache = data.projects || ocrStudioState.projects || [];
+    } catch (e) {
+        trainStudioProjectsCache = ocrStudioState.projects || [];
+    }
+
+    const projSelect = document.getElementById("trainProjectSelect");
+    if (projSelect) {
+        projSelect.innerHTML = "";
+        trainStudioProjectsCache.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.id;
+            opt.textContent = `${p.name} (${p.snapshot_count || (p.snapshots ? p.snapshots.length : 0)} snapshots)`;
+            projSelect.appendChild(opt);
+        });
+        let targetId = ocrStudioState.activeProjectId;
+        if (!targetId || !trainStudioProjectsCache.some(p => p.id === targetId)) {
+            const withSnaps = trainStudioProjectsCache.find(p => (p.snapshot_count || 0) > 0);
+            targetId = withSnaps ? withSnaps.id : (trainStudioProjectsCache[0]?.id || "");
+        }
+        if (targetId) {
+            projSelect.value = targetId;
+            await loadProjectIntoTrainModal(targetId, true);
+        }
+    }
+}
+
+function getSelectedTrainBox() {
+    const boxId = document.getElementById("trainRoiBoxSelect")?.value;
+    const projBoxes = trainStudioCurrentProject?.boxes || ocrStudioState.boxes || [];
+    return projBoxes.find(b => b.id === boxId) || projBoxes[0] || null;
+}
+
+async function handleBatchCropSelectedSnapshots() {
+    const projId = document.getElementById("trainProjectSelect")?.value || ocrStudioState.activeProjectId || "Proj_Test";
+    const box = getSelectedTrainBox();
+    if (!box) {
+        showToast("Please select a Display / ROI Box first.");
+        return;
+    }
+
+    const checklist = document.getElementById("trainSnapshotsChecklist");
+    const selectedFiles = checklist
+        ? Array.from(checklist.querySelectorAll("input.train-snap-check:checked")).map(cb => cb.value)
+        : [];
+
+    if (selectedFiles.length === 0 && trainStudioCustomFiles.length === 0) {
+        showToast("Please select at least 1 snapshot (or click 'All') to auto-crop.");
+        return;
+    }
+
+    const btn = document.getElementById("btnTrainBatchCropSnapshots");
+    const btnText = document.getElementById("btnTrainBatchCropText");
+    const queueSection = document.getElementById("trainBatchQueueSection");
+    const grid = document.getElementById("trainBatchCropsGrid");
+    const queueTitle = document.getElementById("trainBatchQueueTitle");
+
+    if (btn) btn.disabled = true;
+    if (btnText) btnText.textContent = "⏳ Auto-Cropping Snapshots...";
+
+    try {
+        const res = await fetch(`/api/ocr/projects/${projId}/batch_crop_box`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                box: box,
+                filenames: selectedFiles,
+                custom_images: trainStudioCustomFiles
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+            showToast("❌ " + (data.message || "Failed to batch crop snapshots"));
+            return;
+        }
+
+        const crops = data.crops || [];
+        if (queueSection) queueSection.style.display = "flex";
+        if (queueTitle) {
+            queueTitle.textContent = `${box.label} — ${crops.length} Auto-Cropped Snapshot(s)`;
+        }
+        if (grid) {
+            grid.innerHTML = "";
+            crops.forEach((item, idx) => {
+                const card = document.createElement("div");
+                const isWarn = item.needs_review || (item.quality && !item.quality.is_ok);
+                const borderCol = isWarn ? "rgba(251,191,36,0.45)" : "rgba(56,189,248,0.28)";
+                card.className = "train-crop-queue-card";
+                card.dataset.cropBase64 = item.crop_base64 || "";
+                card.dataset.snapshotName = item.filename || `Snap_${idx + 1}`;
+                card.style.cssText = `background:rgba(15,23,42,0.88);border:1px solid ${borderCol};border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;`;
+
+                const qOk = item.quality ? item.quality.is_ok : true;
+                const qBadgeColor = qOk ? "#34d399" : "#fbbf24";
+                const qBadgeText = qOk
+                    ? `✓ Sharp (${item.quality?.sharpness ?? "--"})`
+                    : `⚠ ${item.quality?.warnings?.[0] || "Check focus/glare"}`;
+
+                const header = document.createElement("div");
+                header.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:4px;font-size:0.69rem;";
+                header.innerHTML = `
+                    <span style="color:#e2e8f0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${item.filename}">
+                        <span style="color:#38bdf8;font-family:monospace;">#${item.index}</span> ${item.filename}
+                    </span>
+                    <span style="color:${qBadgeColor};font-size:0.65rem;white-space:nowrap;">${qBadgeText}</span>
+                `;
+                card.appendChild(header);
+
+                const imgWrap = document.createElement("div");
+                imgWrap.style.cssText = "background:#000;border-radius:5px;height:62px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.07);";
+                const im = document.createElement("img");
+                im.src = item.crop_base64;
+                im.alt = item.filename;
+                im.style.cssText = "max-height:60px;max-width:100%;object-fit:contain;";
+                imgWrap.appendChild(im);
+                card.appendChild(imgWrap);
+
+                const ctrlRow = document.createElement("div");
+                ctrlRow.style.cssText = "display:flex;gap:5px;align-items:center;";
+                const inp = document.createElement("input");
+                inp.type = "text";
+                inp.className = "ocr-input train-batch-reading-input";
+                inp.value = item.suggested_reading || "";
+                inp.placeholder = "Reading (e.g. 14.6)";
+                inp.style.cssText = "flex:1;padding:5px 8px;font-size:0.84rem;font-family:monospace;font-weight:700;";
+
+                const saveBtn = document.createElement("button");
+                saveBtn.type = "button";
+                saveBtn.className = "btn-ocr-submit";
+                saveBtn.textContent = "Save";
+                saveBtn.style.cssText = "padding:5px 10px;font-size:0.74rem;white-space:nowrap;";
+
+                const strip = document.createElement("div");
+                strip.style.cssText = "display:none;gap:4px;align-items:center;flex-wrap:wrap;";
+
+                const saveSingleCard = async () => {
+                    const valStr = inp.value.trim();
+                    if (!valStr) {
+                        showToast("Please type the reading value for this crop.");
+                        inp.focus();
+                        return;
+                    }
+                    saveBtn.disabled = true;
+                    saveBtn.textContent = "...";
+                    try {
+                        const r = await fetch("/api/ocr/train/label", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                crop_base64: item.crop_base64,
+                                label: valStr,
+                                box: box,
+                                project_id: projId,
+                                snapshot_name: item.filename
+                            })
+                        });
+                        const resData = await r.json();
+                        if (r.ok && resData.status === "ok") {
+                            saveBtn.textContent = "✓ Saved";
+                            saveBtn.style.background = "rgba(16,185,129,0.28)";
+                            card.style.borderColor = "rgba(52,211,153,0.65)";
+                            card.dataset.alreadySaved = "true";
+                            renderDigitPreviewsStrip(strip, resData.digit_previews || []);
+                            refreshTrainStatsUI();
+                        } else {
+                            saveBtn.textContent = "Save";
+                            showToast("❌ " + (resData.message || "Failed to save"));
+                        }
+                    } catch (err) {
+                        saveBtn.textContent = "Save";
+                        showToast("Error saving crop: " + err.message);
+                    } finally {
+                        saveBtn.disabled = false;
+                    }
+                };
+
+                saveBtn.addEventListener("click", saveSingleCard);
+                inp.addEventListener("keydown", (ev) => {
+                    if (ev.key === "Enter") {
+                        ev.preventDefault();
+                        saveSingleCard();
+                        const allInputs = Array.from(grid.querySelectorAll("input.train-batch-reading-input"));
+                        const nextInp = allInputs[idx + 1];
+                        if (nextInp) nextInp.focus();
+                    }
+                });
+
+                ctrlRow.appendChild(inp);
+                ctrlRow.appendChild(saveBtn);
+                card.appendChild(ctrlRow);
+                card.appendChild(strip);
+                grid.appendChild(card);
+            });
+        }
+    } catch (e) {
+        showToast("Error batch-cropping snapshots: " + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+        updateSelectedSnapshotsSummary();
+    }
 }
 
 document.getElementById("btnOpenTrainModal")?.addEventListener("click", openOcrTrainModal);
@@ -3833,16 +4229,118 @@ document.getElementById("btnCancelTrainModal")?.addEventListener("click", () => 
     document.getElementById("ocrTrainModal")?.classList.remove("active");
 });
 
+document.getElementById("trainProjectSelect")?.addEventListener("change", (e) => {
+    loadProjectIntoTrainModal(e.target.value, true);
+});
+document.getElementById("trainRoiBoxSelect")?.addEventListener("change", () => {
+    handleBatchCropSelectedSnapshots();
+});
+document.getElementById("trainSnapFilterInput")?.addEventListener("input", () => {
+    renderTrainSnapshotsChecklist(trainStudioCurrentProject?.snapshots || []);
+});
+document.getElementById("btnTrainSelectAllSnaps")?.addEventListener("click", () => {
+    document.querySelectorAll("#trainSnapshotsChecklist input.train-snap-check").forEach(cb => { cb.checked = true; });
+    updateSelectedSnapshotsSummary();
+});
+document.getElementById("btnTrainSelectNoneSnaps")?.addEventListener("click", () => {
+    document.querySelectorAll("#trainSnapshotsChecklist input.train-snap-check").forEach(cb => { cb.checked = false; });
+    updateSelectedSnapshotsSummary();
+});
+document.getElementById("btnTrainSelectRange")?.addEventListener("click", () => {
+    const fromIdx = parseInt(document.getElementById("trainSnapRangeFrom")?.value || "1", 10);
+    const toIdx = parseInt(document.getElementById("trainSnapRangeTo")?.value || "9999", 10);
+    document.querySelectorAll("#trainSnapshotsChecklist input.train-snap-check").forEach(cb => {
+        const idx = parseInt(cb.dataset.snapIndex || "1", 10);
+        cb.checked = (idx >= fromIdx && idx <= toIdx);
+    });
+    updateSelectedSnapshotsSummary();
+});
+
+document.getElementById("trainCustomFilesInput")?.addEventListener("change", async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    trainStudioCustomFiles = [];
+    for (const f of files) {
+        const b64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(f);
+        });
+        trainStudioCustomFiles.push({ filename: f.name, image_base64: b64 });
+    }
+    showToast(`📁 Added ${trainStudioCustomFiles.length} local image(s) to snapshot selector.`);
+    renderTrainSnapshotsChecklist(trainStudioCurrentProject?.snapshots || []);
+    await handleBatchCropSelectedSnapshots();
+});
+
+document.getElementById("btnTrainBatchCropSnapshots")?.addEventListener("click", handleBatchCropSelectedSnapshots);
+
+document.getElementById("btnTrainSaveBatchAll")?.addEventListener("click", async () => {
+    const grid = document.getElementById("trainBatchCropsGrid");
+    if (!grid) return;
+    const projId = document.getElementById("trainProjectSelect")?.value || ocrStudioState.activeProjectId || "Proj_Test";
+    const box = getSelectedTrainBox() || {};
+    const cards = Array.from(grid.querySelectorAll(".train-crop-queue-card"));
+
+    const items = [];
+    cards.forEach(card => {
+        const inp = card.querySelector("input.train-batch-reading-input");
+        const val = (inp?.value || "").trim();
+        const cropB64 = card.dataset.cropBase64 || "";
+        const snapName = card.dataset.snapshotName || "";
+        if (val && cropB64 && card.dataset.alreadySaved !== "true") {
+            items.push({ crop_base64: cropB64, label: val, snapshot_name: snapName, box: box });
+        }
+    });
+
+    if (items.length === 0) {
+        showToast("All crops with readings are already saved (or enter readings in the grid first).");
+        return;
+    }
+
+    const btn = document.getElementById("btnTrainSaveBatchAll");
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch("/api/ocr/train/label_batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project_id: projId, box: box, items: items })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+            cards.forEach(card => {
+                const inp = card.querySelector("input.train-batch-reading-input");
+                if (inp && inp.value.trim()) {
+                    card.dataset.alreadySaved = "true";
+                    card.style.borderColor = "rgba(52,211,153,0.65)";
+                    const b = card.querySelector("button");
+                    if (b) {
+                        b.textContent = "✓ Saved";
+                        b.style.background = "rgba(16,185,129,0.28)";
+                    }
+                }
+            });
+            showToast(`🎓 Saved ${data.saved_frames} labeled crops (${data.saved_digits} digits) to training dataset!`);
+            refreshTrainStatsUI();
+        } else {
+            showToast("❌ " + (data.message || "Batch save failed"));
+        }
+    } catch (e) {
+        showToast("Error saving batch labels: " + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+});
+
 document.getElementById("btnTrainGrabRoiCrop")?.addEventListener("click", async () => {
-    const select = document.getElementById("trainRoiBoxSelect");
-    const boxId = select?.value;
-    const box = ocrStudioState.boxes.find(b => b.id === boxId);
-    if (!box || !ocrStudioState.activeProjectId) {
-        showToast("Please select an Active Project and ROI box first.");
+    const projId = document.getElementById("trainProjectSelect")?.value || ocrStudioState.activeProjectId;
+    const box = getSelectedTrainBox();
+    if (!box || !projId) {
+        showToast("Please select a Project and ROI box first.");
         return;
     }
     try {
-        const res = await fetch(`/api/ocr/projects/${ocrStudioState.activeProjectId}/test_box`, {
+        const res = await fetch(`/api/ocr/projects/${projId}/test_box`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ box })
@@ -3886,13 +4384,13 @@ document.getElementById("btnTrainModalSaveLabel")?.addEventListener("click", asy
                 crop_base64: currentTrainModalCropBase64,
                 label: valStr,
                 box: currentTrainModalBox || {},
-                project_id: ocrStudioState.activeProjectId || "manual"
+                project_id: document.getElementById("trainProjectSelect")?.value || ocrStudioState.activeProjectId || "manual"
             })
         });
         const data = await res.json();
         if (res.ok && data.status === "ok") {
             renderDigitPreviewsStrip(strip, data.digit_previews || []);
-            showToast(`🎓 Saved "${valStr}" (${data.digits_saved} digits) to training dataset!`);
+            showToast(`🎓 Saved "${valStr}" (${data.digits_saved} digits, ${data.decimal_places} dec) to training dataset!`);
             refreshTrainStatsUI();
         } else {
             showToast("❌ " + (data.message || "Failed to save label"));
@@ -3903,7 +4401,7 @@ document.getElementById("btnTrainModalSaveLabel")?.addEventListener("click", asy
 });
 
 document.getElementById("btnSeedFromProject")?.addEventListener("click", async () => {
-    const projId = ocrStudioState.activeProjectId || "Proj_Test";
+    const projId = document.getElementById("trainProjectSelect")?.value || ocrStudioState.activeProjectId || "Proj_Test";
     const btn = document.getElementById("btnSeedFromProject");
     if (btn) btn.disabled = true;
     showToast(`⚡ Auto-collecting & labeling ROI crops from project "${projId}"...`);
@@ -3932,9 +4430,10 @@ document.getElementById("btnStartCpuTraining")?.addEventListener("click", async 
     const batchSize = parseInt(document.getElementById("trainBatchInput")?.value || "32", 10);
     const threads = parseInt(document.getElementById("trainThreadsInput")?.value || "6", 10);
     const holdOut = !!document.getElementById("trainHoldOutFramesCheck")?.checked;
+    const useSyn = !!document.getElementById("trainUseSyntheticCheck")?.checked;
 
     if (btn) btn.disabled = true;
-    if (txt) txt.textContent = "Training CNN on CPU...";
+    if (txt) txt.textContent = "Training 2-Channel CNN on CPU...";
     if (spin) spin.style.display = "inline-block";
 
     try {
@@ -3945,12 +4444,13 @@ document.getElementById("btnStartCpuTraining")?.addEventListener("click", async 
                 train_epochs: epochs,
                 train_batch_size: batchSize,
                 train_cpu_threads: threads,
-                train_hold_out_frames: holdOut
+                train_hold_out_frames: holdOut,
+                use_synthetic: useSyn
             })
         });
         const data = await res.json();
         if (res.ok && data.status === "ok") {
-            showToast(`🎉 CPU Training Complete! Val Accuracy: ${data.val_accuracy}% (${data.elapsed_sec}s)`);
+            showToast(`🎉 CPU Training Complete! Digit Acc: ${data.val_accuracy}% | Whole-Reading Acc: ${data.val_reading_accuracy}% (${data.elapsed_sec}s)`);
             await refreshTrainStatsUI();
         } else {
             showToast("❌ Training Error: " + (data.message || "Failed to train"));

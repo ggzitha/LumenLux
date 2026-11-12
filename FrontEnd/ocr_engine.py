@@ -1690,13 +1690,37 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
                 if alt_val is not None and (onnx_val is None or alt_conf > onnx_conf):
                     onnx_text, onnx_conf, onnx_val = alt_text, alt_conf, alt_val
 
-    # Fuse Custom Trained PyTorch CNN with OpenVINO/ONNX Ensemble
+    # Two-Reader Voting, Temporal Sanity & Hard-Example Mining
     cnn_thresh = float(os.environ.get("CUSTOM_CNN_CONF_THRESHOLD", "0.85"))
+    hard_thresh = float(os.environ.get("HARD_EXAMPLE_CONF_THRESHOLD", "0.90"))
+    max_step_c = float(os.environ.get("TEMPORAL_MAX_STEP_C", "5.0"))
     onnx_plausible = (onnx_val is not None and -40.0 <= onnx_val <= 65.0)
     cnn_plausible = (cnn_val is not None and -40.0 <= cnn_val <= 65.0)
+
+    readers_agree = bool(cnn_val is not None and onnx_val is not None and abs(cnn_val - onnx_val) < 1e-3)
+    review_reasons = []
+    if cnn_val is not None and onnx_val is not None and not readers_agree and onnx_plausible and cnn_plausible:
+        review_reasons.append(f"Reader disagreement (CNN={cnn_val} vs AI={onnx_val})")
+        try:
+            from ocr_trainer import log_hard_example
+            log_hard_example(crop, box, f"{cnn_val} vs {onnx_val}", min(cnn_conf, onnx_conf), reason="reader_disagreement")
+        except Exception:
+            pass
+
     if cnn_val is not None and (cnn_conf >= cnn_thresh or (cnn_plausible and not onnx_plausible and cnn_conf >= 0.55)):
-        if onnx_val is None or not onnx_plausible or abs(cnn_val - onnx_val) < 1e-3 or cnn_conf >= (onnx_conf - 0.02):
-            best_conf = max(cnn_conf, onnx_conf) if (onnx_val is not None and abs(cnn_val - onnx_val) < 1e-3) else cnn_conf
+        if onnx_val is None or not onnx_plausible or readers_agree or cnn_conf >= (onnx_conf - 0.02):
+            best_conf = max(cnn_conf, onnx_conf) if readers_agree else cnn_conf
+            if cnn_conf < hard_thresh:
+                review_reasons.append(f"Digit confidence {cnn_conf:.2f} < {hard_thresh:.2f}")
+            try:
+                from ocr_trainer import custom_cnn_engine
+                b_key = str(box.get("id") or box.get("label") or "default")
+                prev_v = custom_cnn_engine.last_readings_by_box.get(b_key)
+                if prev_v is not None and abs(cnn_val - prev_v) > max_step_c:
+                    review_reasons.append(f"Temporal jump Δ{abs(cnn_val - prev_v):.2f}°C > {max_step_c}°C")
+                custom_cnn_engine.last_readings_by_box[b_key] = cnn_val
+            except Exception:
+                pass
             logger.info("[OCR Engine] Custom PyTorch CNN recognized reading: %s -> %.3f (conf: %.2f)", cnn_text, cnn_val, best_conf)
             return {
                 "text": cnn_text,
@@ -1704,13 +1728,23 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
                 "status": "success",
                 "confidence": round(best_conf, 3),
                 "engine": "pytorch_cnn",
-                "model_version": "Custom PyTorch 7-Seg CNN",
+                "model_version": "Custom PyTorch 7-Seg CNN (2-Ch + TTA)",
                 "display_type": "pytorch_cnn",
+                "readers_agree": readers_agree,
+                "needs_review": len(review_reasons) > 0,
+                "review_reasons": review_reasons,
                 "crop_bytes": crop_bytes
             }
 
     # If OpenVINO / ONNX AI produced a confident valid numeric reading, return immediately!
     if onnx_val is not None and onnx_conf >= 0.40:
+        if onnx_conf < hard_thresh:
+            review_reasons.append(f"Confidence {onnx_conf:.2f} < {hard_thresh:.2f}")
+            try:
+                from ocr_trainer import log_hard_example
+                log_hard_example(crop, box, onnx_text, onnx_conf, reason=f"ai_conf_{onnx_conf:.2f}_below_{hard_thresh:.2f}")
+            except Exception:
+                pass
         ver_str = getattr(onnx_ocr_engine, "model_version", "v4").upper()
         backend_str = getattr(onnx_ocr_engine, "backend_name", "ONNX").upper()
         logger.info("[OCR Engine] AI (%s PP-OCR%s) recognized reading: %s -> %.3f (conf: %.2f)", backend_str, ver_str, onnx_text, onnx_val, onnx_conf)
@@ -1722,6 +1756,9 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
             "engine": "openvino_ai" if "OPENVINO" in backend_str else "onnx_ai",
             "model_version": getattr(onnx_ocr_engine, "model_version", "v4"),
             "display_type": "openvino_ai" if "OPENVINO" in backend_str else "onnx_ai",
+            "readers_agree": readers_agree,
+            "needs_review": len(review_reasons) > 0,
+            "review_reasons": review_reasons,
             "crop_bytes": crop_bytes
         }
 

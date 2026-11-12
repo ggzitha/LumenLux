@@ -3,12 +3,13 @@ Lumen-Zero Frontend Web Application.
 Built with FastAPI to perform heavy lifting: authentication, stream proxying,
 connection pooling, response caching, inactivity auto-shutdown, and error resilience for Raspberry Pi.
 """
+from __future__ import annotations
 import asyncio
 import io
 import os
 import time
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any, List, Tuple, Set, Union
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,6 +30,8 @@ from ocr_trainer import (
     get_training_dataset_stats,
     save_labeled_roi_crop,
     delete_labeled_frame,
+    delete_hard_example,
+    assess_crop_quality,
     train_custom_model,
     get_train_config
 )
@@ -683,13 +686,15 @@ def sanitize_project_name(raw_name: str) -> str:
     return safe or 'Project_01'
 
 def resolve_project_dir(project_id: str) -> Path:
-    """Locate project directory under PROJECTS_DIR or legacy location."""
+    """Locate project directory under PROJECTS_DIR, legacy location, or workspace root (e.g. Proj_Test)."""
     safe_name = sanitize_project_name(project_id)
     p = PROJECTS_DIR / safe_name
     if not p.exists() and (PROJECTS_DIR / str(project_id)).exists():
         return PROJECTS_DIR / str(project_id)
     if not p.exists() and LEGACY_PROJECTS_DIR.exists() and (LEGACY_PROJECTS_DIR / safe_name).exists():
         return LEGACY_PROJECTS_DIR / safe_name
+    if not p.exists() and (BASE_DIR.parent / safe_name).is_dir():
+        return BASE_DIR.parent / safe_name
     return p
 
 def get_project_metadata(proj_dir: Path) -> dict:
@@ -751,6 +756,23 @@ async def list_ocr_projects(user: str = Depends(require_auth)):
                         "snapshots": snapshots,
                         "boxes": meta.get("boxes", [])
                     })
+
+    # Also include workspace Proj_Test directory if present
+    workspace_test_dir = BASE_DIR.parent / "Proj_Test"
+    if workspace_test_dir.is_dir() and "Proj_Test" not in seen_ids:
+        seen_ids.add("Proj_Test")
+        meta = get_project_metadata(workspace_test_dir)
+        snapshots = sorted(
+            [f.name for f in workspace_test_dir.glob("*.jpg")] + [f.name for f in workspace_test_dir.glob("*.png")]
+        )
+        projects.append({
+            "id": "Proj_Test",
+            "name": meta.get("name", "Proj_Test"),
+            "created_at": meta.get("created_at", workspace_test_dir.stat().st_ctime),
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots,
+            "boxes": meta.get("boxes", [])
+        })
 
     logger.info("Retrieved %d OCR calibration project(s) from %s", len(projects), PROJECTS_DIR)
     return {"status": "ok", "projects": projects}
@@ -1477,6 +1499,209 @@ async def api_ocr_train_seed_project(project_id: str, user: str = Depends(requir
         return JSONResponse(res)
     except Exception as e:
         logger.error("Error seeding training data from project %s: %s", project_id, e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/projects/{project_id}/batch_crop_box")
+async def api_ocr_batch_crop_box(project_id: str, request: Request, user: str = Depends(require_auth)):
+    """
+    Auto-crop a selected ROI bounding box across ALL (or user-selected) snapshots in a project,
+    returning a queue/grid of crops with suggested OCR readings and quality checks.
+    """
+    record_activity()
+    proj_dir = resolve_project_dir(project_id)
+    if not proj_dir.is_dir():
+        fallback_test = BASE_DIR.parent / "Proj_Test"
+        if fallback_test.is_dir():
+            proj_dir = fallback_test
+        else:
+            return JSONResponse({"status": "error", "message": f"Project '{project_id}' not found."}, status_code=404)
+
+    payload = await request.json()
+    box = payload.get("box", {})
+    selected_filenames = payload.get("filenames", [])
+    custom_images = payload.get("custom_images", [])  # Optional client-uploaded folder/files [{filename, image_base64}]
+
+    def _batch_crop_worker() -> Dict[str, Any]:
+        all_snaps = sorted(
+            list(proj_dir.glob("*.jpg")) + list(proj_dir.glob("*.png")),
+            key=lambda p: p.stat().st_mtime
+        )
+        if selected_filenames:
+            sel_set = set(selected_filenames)
+            target_snaps = [p for p in all_snaps if p.name in sel_set]
+        else:
+            target_snaps = all_snaps
+
+        cam_t = (box.get("camera_type") or box.get("target") or "").lower()
+        lbl_t = str(box.get("label", "")).lower()
+        is_std = (cam_t == "device" or "standard" in lbl_t or "fluke" in lbl_t or "1502" in lbl_t)
+        box_decimals = box.get("decimals")
+
+        crops_list = []
+
+        # 1. Process project snapshot files
+        for idx, snap_p in enumerate(target_snaps):
+            try:
+                pil_im = Image.open(snap_p).convert("RGB")
+                ocr_res = perform_display_ocr(pil_im, box, is_single_feed=False)
+                crop_bytes = ocr_res.get("crop_bytes")
+                if not crop_bytes:
+                    crop_pil, _ = extract_roi_region(pil_im, box, is_single_feed=False)
+                    buf = io.BytesIO()
+                    crop_pil.save(buf, format="JPEG", quality=92)
+                    crop_bytes = buf.getvalue()
+                else:
+                    crop_pil = Image.open(io.BytesIO(crop_bytes)).convert("RGB")
+
+                quality = assess_crop_quality(crop_pil)
+                val = ocr_res.get("value")
+                if val is not None:
+                    if box_decimals is not None:
+                        sug_str = f"{val:.{int(box_decimals)}f}"
+                    else:
+                        sug_str = f"{val:.3f}" if is_std else f"{val:.1f}"
+                else:
+                    sug_str = ""
+
+                mtime = snap_p.stat().st_mtime
+                crops_list.append({
+                    "index": idx + 1,
+                    "filename": snap_p.name,
+                    "timestamp": mtime,
+                    "date_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
+                    "crop_base64": "data:image/jpeg;base64," + base64.b64encode(crop_bytes).decode("ascii"),
+                    "suggested_reading": sug_str,
+                    "raw_text": ocr_res.get("text", ""),
+                    "confidence": ocr_res.get("confidence", 0.0),
+                    "engine": ocr_res.get("engine", ""),
+                    "needs_review": bool(ocr_res.get("needs_review", False)),
+                    "review_reasons": ocr_res.get("review_reasons", []),
+                    "quality": quality
+                })
+            except Exception as ex:
+                logger.warning("Batch crop skipped %s: %s", snap_p.name, ex)
+
+        # 2. Process any custom uploaded local files
+        for c_idx, item in enumerate(custom_images):
+            try:
+                b64 = item.get("image_base64", "")
+                fname = item.get("filename", f"Upload_{c_idx + 1}.jpg")
+                if "," in b64:
+                    b64 = b64.split(",", 1)[1]
+                raw = base64.b64decode(b64)
+                pil_im = Image.open(io.BytesIO(raw)).convert("RGB")
+                ocr_res = perform_display_ocr(pil_im, box, is_single_feed=False)
+                crop_bytes = ocr_res.get("crop_bytes")
+                crop_pil = Image.open(io.BytesIO(crop_bytes)).convert("RGB") if crop_bytes else pil_im
+                quality = assess_crop_quality(crop_pil)
+                val = ocr_res.get("value")
+                sug_str = (f"{val:.3f}" if is_std else f"{val:.1f}") if val is not None else ""
+                crops_list.append({
+                    "index": len(crops_list) + 1,
+                    "filename": fname,
+                    "timestamp": time.time(),
+                    "date_str": "Uploaded File",
+                    "crop_base64": "data:image/jpeg;base64," + base64.b64encode(crop_bytes).decode("ascii") if crop_bytes else "",
+                    "suggested_reading": sug_str,
+                    "raw_text": ocr_res.get("text", ""),
+                    "confidence": ocr_res.get("confidence", 0.0),
+                    "engine": ocr_res.get("engine", ""),
+                    "needs_review": bool(ocr_res.get("needs_review", False)),
+                    "review_reasons": ocr_res.get("review_reasons", []),
+                    "quality": quality
+                })
+            except Exception as ex:
+                logger.warning("Custom image batch crop skipped: %s", ex)
+
+        return {
+            "status": "ok",
+            "project_id": proj_dir.name,
+            "box_id": box.get("id", ""),
+            "box_label": box.get("label", "Display"),
+            "total_snapshots": len(all_snaps),
+            "cropped_count": len(crops_list),
+            "crops": crops_list
+        }
+
+    try:
+        res = await asyncio.to_thread(_batch_crop_worker)
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("Error in batch_crop_box: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/api/ocr/train/label_batch")
+async def api_ocr_train_label_batch(request: Request, user: str = Depends(require_auth)):
+    """
+    Save multiple labeled ROI crops from the batch queue/grid in a single request.
+    Automatically learns the decimal point format per device/box from the user's labels.
+    """
+    record_activity()
+    payload = await request.json()
+    project_id = str(payload.get("project_id", "manual")).strip() or "manual"
+    box = payload.get("box", {})
+    items = payload.get("items", [])
+
+    if not items or not isinstance(items, list):
+        return JSONResponse({"status": "error", "message": "No labeled items provided."}, status_code=400)
+
+    def _save_batch_worker() -> Dict[str, Any]:
+        saved_frames = 0
+        saved_digits = 0
+        errors = []
+        results = []
+        for idx, it in enumerate(items):
+            lbl = str(it.get("label", "")).strip()
+            crop_b64 = str(it.get("crop_base64", "")).strip()
+            snap_name = str(it.get("snapshot_name", "")).strip()
+            item_box = it.get("box") or box
+            if not lbl or not crop_b64:
+                continue
+            try:
+                if "," in crop_b64:
+                    crop_b64 = crop_b64.split(",", 1)[1]
+                raw = base64.b64decode(crop_b64)
+                pil_crop = Image.open(io.BytesIO(raw)).convert("RGB")
+                r = save_labeled_roi_crop(pil_crop, lbl, item_box, project_id=project_id, snapshot_name=snap_name)
+                saved_frames += 1
+                saved_digits += int(r.get("digits_saved", 0))
+                results.append({
+                    "snapshot_name": snap_name,
+                    "label_reading": lbl,
+                    "frame_id": r.get("frame_id"),
+                    "digits_saved": r.get("digits_saved", 0),
+                    "digit_previews": r.get("digit_previews", [])
+                })
+            except Exception as ex:
+                errors.append(f"{snap_name or idx}: {ex}")
+
+        return {
+            "status": "ok",
+            "saved_frames": saved_frames,
+            "saved_digits": saved_digits,
+            "results": results,
+            "errors": errors,
+            "dataset_stats": get_training_dataset_stats()
+        }
+
+    try:
+        res = await asyncio.to_thread(_save_batch_worker)
+        return JSONResponse(res)
+    except Exception as e:
+        logger.error("Error in label_batch: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.delete("/api/ocr/train/hard_example/{hard_id}")
+async def api_ocr_train_delete_hard_example(hard_id: str, user: str = Depends(require_auth)):
+    """Remove a hard example from the review queue after labeling or dismissing."""
+    record_activity()
+    try:
+        res = await asyncio.to_thread(delete_hard_example, hard_id)
+        return JSONResponse(res)
+    except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
