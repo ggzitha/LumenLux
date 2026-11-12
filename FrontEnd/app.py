@@ -36,8 +36,8 @@ from ocr_trainer import (
     get_train_config
 )
 
-# Load environment configuration
-load_dotenv()
+# Load environment configuration (override=False to let Docker/Dockge env variables take precedence)
+load_dotenv(override=False)
 
 # Allowed IP subnets (Strict LAN-only access control)
 DEFAULT_ALLOWED_NETWORKS = [
@@ -120,7 +120,7 @@ LED_AUTO_OFF = int(os.environ.get("LED_AUTO_OFF", 120))  # Auto turn off WS2812B
 LED_LENGTH = int(os.environ.get("LED_LENGTH", 100))
 DEFAULT_RESOLUTION = os.environ.get("DEFAULT_RESOLUTION", "1920x1080").strip()
 DEFAULT_DEVICE_CAM_FIT = os.environ.get("DEFAULT_DEVICE_CAM_FIT", "cover").strip().lower()
-OCR_PASSWORD = os.environ.get("OCR_PASSWORD", "QwertY123!")
+OCR_PASSWORD = os.environ.get("OCR_PASSWORD", "illuminati")
 DEFAULT_STREAM_ENGINE = os.environ.get("DEFAULT_STREAM_ENGINE", "webrtc").strip().lower()
 
 # Full System Inactivity Timeout (Seconds) - Powers off camera and entire system after 10m (600s)
