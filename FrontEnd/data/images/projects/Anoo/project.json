@@ -1,0 +1,102 @@
+{
+  "name": "Anoo",
+  "created_at": 1794466479.384569,
+  "boxes": [
+    {
+      "id": "box_disp_01",
+      "label": "Display 01 (LCD)",
+      "camera_type": "chamber",
+      "target": "chamber",
+      "mode": "quad",
+      "x": 0.1567,
+      "y": 0.5362,
+      "w": 0.185,
+      "h": 0.135,
+      "width": 0.185,
+      "height": 0.135,
+      "points": [
+        [
+          0.1567,
+          0.5362
+        ],
+        [
+          0.3417,
+          0.5362
+        ],
+        [
+          0.3417,
+          0.6712
+        ],
+        [
+          0.1567,
+          0.6712
+        ]
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "box_disp_02",
+      "label": "Display 02 (LCD)",
+      "camera_type": "chamber",
+      "target": "chamber",
+      "mode": "quad",
+      "x": 0.3806,
+      "y": 0.5197,
+      "w": 0.2985,
+      "h": 0.135,
+      "width": 0.2985,
+      "height": 0.135,
+      "points": [
+        [
+          0.3806,
+          0.5197
+        ],
+        [
+          0.6791,
+          0.5197
+        ],
+        [
+          0.6791,
+          0.6547
+        ],
+        [
+          0.3806,
+          0.6547
+        ]
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "box_disp_03",
+      "label": "Display 03 (LCD)",
+      "camera_type": "chamber",
+      "target": "chamber",
+      "mode": "quad",
+      "x": 0.739,
+      "y": 0.5197,
+      "w": 0.185,
+      "h": 0.135,
+      "width": 0.185,
+      "height": 0.135,
+      "points": [
+        [
+          0.739,
+          0.5197
+        ],
+        [
+          0.924,
+          0.5197
+        ],
+        [
+          0.924,
+          0.6547
+        ],
+        [
+          0.739,
+          0.6547
+        ]
+      ],
+      "status": "candidate"
+    }
+  ]
+}

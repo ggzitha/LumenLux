@@ -2773,10 +2773,12 @@ async function loadOcrProjects() {
         ocrStudioState.projects = Array.isArray(data) ? data : (data.projects || []);
 
         // Restore active project from storage or default to first project
+        // (unless the user explicitly unselected the active project - respect that choice)
         const savedActiveId = localStorage.getItem("lumen_active_ocr_project");
+        const userUnselected = localStorage.getItem("lumen_active_ocr_project_none") === "1";
         if (savedActiveId && ocrStudioState.projects.some(p => p.id === savedActiveId)) {
             ocrStudioState.activeProjectId = savedActiveId;
-        } else if (ocrStudioState.projects.length > 0 && !ocrStudioState.activeProjectId) {
+        } else if (!userUnselected && ocrStudioState.projects.length > 0 && !ocrStudioState.activeProjectId) {
             ocrStudioState.activeProjectId = ocrStudioState.projects[0].id;
         }
 
@@ -2784,6 +2786,8 @@ async function loadOcrProjects() {
 
         if (ocrStudioState.activeProjectId) {
             await selectActiveProject(ocrStudioState.activeProjectId, false);
+        } else {
+            deselectActiveProject(false);
         }
     } catch (err) {
         console.error("[OCR Studio] Failed to fetch projects:", err);
@@ -2811,6 +2815,7 @@ function renderProjectsList() {
             ? p.snapshots.map(s => `
                 <li class="project-snapshot-item">
                     <div class="snapshot-name-wrap" title="${s}">
+                        <input type="checkbox" class="snap-zip-check" value="${s}" title="Select for ZIP download" style="margin-right:5px;">
                         <span class="snapshot-lead">--</span>
                         <span>${s}</span>
                     </div>
@@ -2818,6 +2823,16 @@ function renderProjectsList() {
                 </li>
             `).join("")
             : `<li class="project-snapshot-item" style="color: var(--text-muted); font-style: italic;">No snapshots captured yet. Capture snapshots using "Catch It!" to save into this folder.</li>`;
+
+        const zipToolbar = snapCount > 0 ? `
+            <div class="snap-zip-toolbar" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:2px 0 6px;">
+                <label style="font-size:0.7rem;color:var(--text-secondary);display:flex;gap:4px;align-items:center;cursor:pointer;">
+                    <input type="checkbox" data-zip-select-all="${p.id}"> Select all
+                </label>
+                <button type="button" class="btn-project-action" data-zip-selected="${p.id}" title="Download only the checked snapshots as .zip" disabled>
+                    <span>ZIP selected (0)</span>
+                </button>
+            </div>` : "";
 
         return `
             <div class="project-accordion-item ${isActive ? 'is-active-project' : ''}" data-project-id="${p.id}">
@@ -2828,11 +2843,17 @@ function renderProjectsList() {
                         <span class="project-snap-count">(${snapCount} snapshots)</span>
                     </div>
                     <div class="project-header-right" onclick="event.stopPropagation()">
-                        <button type="button" class="btn-project-action btn-export" data-export-project="${p.id}" title="Run OCR & Export Excel (.xlsx)">
+                        <button type="button" class="btn-project-action btn-export" data-export-project="${p.id}" title="Run OCR &amp; Export Excel (.xlsx)">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                             </svg>
                             <span>Export</span>
+                        </button>
+                        <button type="button" class="btn-project-action btn-export" data-zip-project="${p.id}" title="Download all snapshot images as a .zip">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6h-2v2h2v2h-2v2h-2v-2h2v-2h-2v-2h2v-2h-2V8h2v2h2v2z"/>
+                            </svg>
+                            <span>ZIP</span>
                         </button>
                         <button type="button" class="btn-project-action btn-delete" data-delete-project="${p.id}" title="Delete Project">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -2840,7 +2861,7 @@ function renderProjectsList() {
                             </svg>
                             <span>Delete</span>
                         </button>
-                        <label class="project-radio-label" title="Set as Active Project for snapshots">
+                        <label class="project-radio-label" title="Set as Active Project for snapshots (click again to unselect)">
                             <input type="radio" name="active_ocr_project" value="${p.id}" class="project-radio-input" ${isActive ? 'checked' : ''} data-select-project="${p.id}">
                             <span class="project-radio-custom"></span>
                             <span class="project-radio-text">Active</span>
@@ -2848,6 +2869,7 @@ function renderProjectsList() {
                     </div>
                 </div>
                 <div class="project-item-body">
+                    ${zipToolbar}
                     <ul class="project-snapshots-list">
                         ${snapItems}
                     </ul>
@@ -2864,12 +2886,50 @@ function renderProjectsList() {
         });
     });
 
-    // Bind radio active selection
+    // Bind radio active selection. A native radio can never be unchecked by clicking it, so we
+    // compare against the stored active project: clicking the already-active one deselects it.
     listContainer.querySelectorAll("[data-select-project]").forEach(radio => {
-        radio.addEventListener("change", (e) => {
-            if (e.target.checked) {
-                selectActiveProject(e.target.value, true);
+        radio.addEventListener("click", (e) => {
+            const pid = e.target.value;
+            if (ocrStudioState.activeProjectId === pid) {
+                e.target.checked = false;
+                deselectActiveProject(true);
+            } else {
+                selectActiveProject(pid, true);
             }
+        });
+    });
+
+    // ZIP: whole project
+    listContainer.querySelectorAll("[data-zip-project]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            downloadProjectZip(btn.getAttribute("data-zip-project"), []);
+        });
+    });
+
+    // ZIP: selected snapshots (checkbox state -> button label/enabled)
+    listContainer.querySelectorAll(".project-accordion-item").forEach(item => {
+        const pid = item.getAttribute("data-project-id");
+        const checks = () => Array.from(item.querySelectorAll(".snap-zip-check"));
+        const selBtn = item.querySelector("[data-zip-selected]");
+        const allBox = item.querySelector("[data-zip-select-all]");
+        const refresh = () => {
+            const n = checks().filter(c => c.checked).length;
+            if (selBtn) {
+                selBtn.disabled = n === 0;
+                selBtn.querySelector("span").textContent = `ZIP selected (${n})`;
+            }
+            if (allBox) allBox.checked = n > 0 && n === checks().length;
+        };
+        checks().forEach(c => c.addEventListener("change", refresh));
+        allBox?.addEventListener("change", () => {
+            checks().forEach(c => { c.checked = allBox.checked; });
+            refresh();
+        });
+        selBtn?.addEventListener("click", () => {
+            const files = checks().filter(c => c.checked).map(c => c.value);
+            if (files.length) downloadProjectZip(pid, files);
         });
     });
 
@@ -2890,9 +2950,28 @@ function renderProjectsList() {
     });
 }
 
+function deselectActiveProject(notify = true) {
+    ocrStudioState.activeProjectId = null;
+    ocrStudioState.activeProject = null;
+    ocrStudioState.boxes = [];
+    localStorage.removeItem("lumen_active_ocr_project");
+    localStorage.setItem("lumen_active_ocr_project_none", "1");
+
+    const activeBadge = document.getElementById("currentActiveProjectName");
+    if (activeBadge) activeBadge.textContent = "None (Select below)";
+    document.querySelectorAll(".project-accordion-item").forEach(el => {
+        el.classList.remove("is-active-project");
+        const radio = el.querySelector(".project-radio-input");
+        if (radio) radio.checked = false;
+    });
+    renderRoiBoxes();
+    if (notify) showToast("Active project unselected. Select one to capture snapshots / edit ROI boxes.");
+}
+
 async function selectActiveProject(projectId, notify = true) {
     ocrStudioState.activeProjectId = projectId;
     localStorage.setItem("lumen_active_ocr_project", projectId);
+    localStorage.removeItem("lumen_active_ocr_project_none");
 
     const activeBadge = document.getElementById("currentActiveProjectName");
     const proj = ocrStudioState.projects.find(p => p.id === projectId);
@@ -3131,15 +3210,67 @@ async function deleteProjectPrompt(projectId) {
 function exportProjectExcel(projectId) {
     const proj = ocrStudioState.projects.find(p => p.id === projectId);
     const name = proj ? proj.name : projectId;
-    showToast(`📊 Generating Excel report for "${name}" with embedded snapshots & OCR... Please wait.`);
+    const getLabel = () => document.querySelector(`[data-export-project="${CSS.escape(projectId)}"] span`);
+    const setLabel = (t, busy) => {
+        const sp = getLabel();
+        if (sp) sp.textContent = t;
+        const btn = sp ? sp.closest("button") : null;
+        if (btn) btn.disabled = !!busy;
+    };
 
-    // Trigger direct browser download
+    // Background job + polling: the request returns immediately, so reverse proxies / Cloudflare
+    // never hit their 503/524 timeout no matter how many snapshots are OCR'd.
+    (async () => {
+        setLabel("Starting…", true);
+        showToast(`📊 Generating Excel for "${name}" in the background…`);
+        try {
+            const r = await fetch(`/api/ocr/projects/${encodeURIComponent(projectId)}/export/start`, { method: "POST" });
+            if (!r.ok) throw new Error(`start failed (${r.status})`);
+            const { job_id } = await r.json();
+            const t0 = Date.now();
+            while (true) {
+                await new Promise(res => setTimeout(res, 1000));
+                if (Date.now() - t0 > 30 * 60 * 1000) throw new Error("timed out waiting for export");
+                let st;
+                try {
+                    const sr = await fetch(`/api/ocr/projects/${encodeURIComponent(projectId)}/export/status/${job_id}`);
+                    if (sr.status === 404) throw new Error("export job expired");
+                    st = await sr.json();
+                } catch (pollErr) {
+                    if (String(pollErr.message).includes("expired")) throw pollErr;
+                    continue; // transient network hiccup (e.g. mobile) - keep polling
+                }
+                if (st.status === "running") {
+                    setLabel(st.total ? `${st.done}/${st.total}` : "Working…", true);
+                } else if (st.status === "done") {
+                    setLabel("Export", false);
+                    const link = document.createElement("a");
+                    link.href = `/api/ocr/projects/${encodeURIComponent(projectId)}/export/download/${job_id}`;
+                    link.download = st.filename || `${name}_Calibration_Report.xlsx`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    showToast(`✅ Excel ready (${st.elapsed ?? "?"}s)`);
+                    return;
+                } else {
+                    throw new Error(st.message || "export failed");
+                }
+            }
+        } catch (err) {
+            setLabel("Export", false);
+            showToast("❌ Excel export failed: " + err.message);
+        }
+    })();
+}
+
+function downloadProjectZip(projectId, files) {
+    const params = files && files.length ? `?files=${encodeURIComponent(files.join(","))}` : "";
     const link = document.createElement("a");
-    link.href = `/api/ocr/projects/${projectId}/export`;
-    link.download = `${name}_Calibration_Report.xlsx`;
+    link.href = `/api/ocr/projects/${encodeURIComponent(projectId)}/download_zip${params}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    showToast(`🗜️ Preparing ZIP of ${files && files.length ? files.length : "all"} snapshot image(s)…`);
 }
 
 // --------------------------------------------------------------------------
@@ -3905,10 +4036,260 @@ async function refreshTrainStatsUI() {
                 });
             }
         }
+        // Keep the Trained Data Browser in sync when the dataset changed (new labels saved elsewhere)
+        const newSig = `${data.total_frames}|${(data.recent_frames && data.recent_frames[0] && data.recent_frames[0].frame_id) || ""}`;
+        if (trainBrowseState.skipReload) {
+            trainBrowseState.skipReload = false;
+            trainBrowseState.sig = newSig;
+        } else if (trainBrowseState.sig !== newSig) {
+            trainBrowseState.sig = newSig;
+            trainBrowseLoad(true);
+        }
     } catch (e) {
         console.warn("Failed to load training stats:", e);
     }
 }
+
+// --------------------------------------------------------------------------
+// TRAINED DATA BROWSER: browse / search / edit label / delete (single + bulk)
+// --------------------------------------------------------------------------
+const trainBrowseState = {
+    offset: 0, limit: 40, total: 0, items: [], selected: new Set(),
+    loading: false, sig: null, skipReload: false, searchTimer: null
+};
+
+function trainBrowseFilters() {
+    return {
+        q: (document.getElementById("trainBrowseSearch")?.value || "").trim(),
+        box: document.getElementById("trainBrowseBoxFilter")?.value || "",
+        proj: document.getElementById("trainBrowseProjFilter")?.value || ""
+    };
+}
+
+function trainBrowseUpdateToolbar() {
+    const n = trainBrowseState.selected.size;
+    const btn = document.getElementById("btnTrainBrowseDeleteSel");
+    if (btn) {
+        btn.disabled = n === 0;
+        btn.textContent = `🗑 Delete selected (${n})`;
+    }
+    const cnt = document.getElementById("trainBrowseCount");
+    if (cnt) cnt.textContent = `(${trainBrowseState.items.length} of ${trainBrowseState.total})`;
+    const more = document.getElementById("btnTrainBrowseMore");
+    if (more) more.style.display = trainBrowseState.items.length < trainBrowseState.total ? "inline-block" : "none";
+    const all = document.getElementById("trainBrowseSelectAll");
+    if (all) all.checked = trainBrowseState.items.length > 0 && trainBrowseState.items.every(i => trainBrowseState.selected.has(i.frame_id));
+}
+
+function trainBrowseFillSelect(sel, values, placeholder) {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">${placeholder}</option>`;
+    values.forEach(v => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = v;
+        sel.appendChild(o);
+    });
+    if (prev && values.includes(prev)) sel.value = prev;
+}
+
+function trainBrowseRenderRow(it) {
+    const row = document.createElement("div");
+    row.dataset.frameId = it.frame_id;
+    row.style.cssText = "display:flex;gap:7px;align-items:center;background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.07);border-radius:7px;padding:5px 6px;content-visibility:auto;contain-intrinsic-size:52px;";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = trainBrowseState.selected.has(it.frame_id);
+    cb.addEventListener("change", () => {
+        if (cb.checked) trainBrowseState.selected.add(it.frame_id);
+        else trainBrowseState.selected.delete(it.frame_id);
+        trainBrowseUpdateToolbar();
+    });
+
+    const link = document.createElement("a");
+    link.href = it.crop_url;
+    link.target = "_blank";
+    link.title = "Open full crop";
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.src = it.crop_url;
+    img.alt = it.label_reading;
+    img.style.cssText = "height:36px;width:84px;object-fit:contain;background:#000;border-radius:4px;display:block;";
+    link.appendChild(img);
+
+    const mid = document.createElement("div");
+    mid.style.cssText = "flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;";
+    const meta = document.createElement("div");
+    meta.style.cssText = "font-size:0.64rem;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    const dec = it.decimal_places !== undefined && it.decimal_places !== null ? ` · ${it.decimal_places} dec` : "";
+    meta.textContent = `${it.box_label || "ROI"} · ${it.project_id || ""}${dec}${it.snapshot_name ? " · " + it.snapshot_name : ""}`;
+    meta.title = meta.textContent;
+
+    const editRow = document.createElement("div");
+    editRow.style.cssText = "display:flex;gap:4px;align-items:center;";
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = "ocr-input";
+    inp.value = it.label_reading || "";
+    inp.style.cssText = "width:78px;padding:3px 6px;font-size:0.76rem;font-family:monospace;font-weight:700;";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn-ocr-submit";
+    save.textContent = "Save";
+    save.style.cssText = "padding:3px 8px;font-size:0.68rem;display:none;";
+    inp.addEventListener("input", () => {
+        save.style.display = inp.value.trim() !== String(it.label_reading) ? "inline-block" : "none";
+    });
+    const doSave = async () => {
+        const v = inp.value.trim();
+        if (!v) { showToast("Enter the true reading first."); return; }
+        save.disabled = true;
+        try {
+            const r = await fetch(`/api/ocr/train/frame/${it.frame_id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ label: v })
+            });
+            const d = await r.json();
+            if (r.ok && d.status === "ok") {
+                it.label_reading = v;
+                it.decimal_places = d.decimal_places;
+                meta.textContent = `${it.box_label || "ROI"} · ${it.project_id || ""} · ${d.decimal_places} dec${it.snapshot_name ? " · " + it.snapshot_name : ""}`;
+                save.style.display = "none";
+                showToast(`✏️ Relabeled to "${v}" (${d.decimal_places} dec)`);
+                trainBrowseState.skipReload = true;
+                refreshTrainStatsUI();
+            } else {
+                showToast("❌ " + (d.message || "Could not update label"));
+            }
+        } catch (e) {
+            showToast("Network error: " + e.message);
+        } finally {
+            save.disabled = false;
+        }
+    };
+    save.addEventListener("click", doSave);
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
+    editRow.appendChild(inp);
+    editRow.appendChild(save);
+    mid.appendChild(meta);
+    mid.appendChild(editRow);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "✕";
+    del.title = "Delete this labeled frame and its digit samples";
+    del.style.cssText = "background:rgba(239,68,68,0.18);color:#f87171;border:1px solid rgba(239,68,68,0.35);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.74rem;";
+    del.addEventListener("click", async () => {
+        if (!confirm(`Delete labeled frame "${it.label_reading}"?`)) return;
+        row.style.opacity = "0.4";
+        const ok = await trainBrowseDelete([it.frame_id]);
+        if (!ok) row.style.opacity = "1";
+    });
+
+    row.append(cb, link, mid, del);
+    return row;
+}
+
+async function trainBrowseDelete(ids) {
+    try {
+        const r = await fetch("/api/ocr/train/frames/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ frame_ids: ids })
+        });
+        const d = await r.json();
+        if (!r.ok || d.status !== "ok") {
+            showToast("❌ " + (d.message || "Delete failed"));
+            return false;
+        }
+        const idSet = new Set(ids);
+        trainBrowseState.items = trainBrowseState.items.filter(i => !idSet.has(i.frame_id));
+        ids.forEach(id => trainBrowseState.selected.delete(id));
+        trainBrowseState.total = Math.max(0, trainBrowseState.total - ids.length);
+        document.querySelectorAll("#trainBrowseList [data-frame-id]").forEach(el => {
+            if (idSet.has(el.dataset.frameId)) el.remove();
+        });
+        trainBrowseUpdateToolbar();
+        showToast(`🗑 Deleted ${d.deleted} labeled frame(s). Retrain to apply.`);
+        trainBrowseState.skipReload = true;
+        refreshTrainStatsUI();
+        return true;
+    } catch (e) {
+        showToast("Network error: " + e.message);
+        return false;
+    }
+}
+
+async function trainBrowseLoad(reset = true) {
+    const list = document.getElementById("trainBrowseList");
+    if (!list || trainBrowseState.loading) return;
+    trainBrowseState.loading = true;
+    if (reset) {
+        trainBrowseState.offset = 0;
+        trainBrowseState.items = [];
+        trainBrowseState.selected.clear();
+        list.innerHTML = `<div style="font-size:0.74rem;color:#94a3b8;padding:6px;grid-column:1/-1;">Loading…</div>`;
+    }
+    const f = trainBrowseFilters();
+    const qs = new URLSearchParams({ offset: String(trainBrowseState.offset), limit: String(trainBrowseState.limit) });
+    if (f.q) qs.set("q", f.q);
+    if (f.box) qs.set("box_label", f.box);
+    if (f.proj) qs.set("project_id", f.proj);
+    try {
+        const r = await fetch(`/api/ocr/train/frames?${qs.toString()}`);
+        const d = await r.json();
+        if (d.status !== "ok") throw new Error(d.message || "load failed");
+        trainBrowseFillSelect(document.getElementById("trainBrowseBoxFilter"), d.box_labels || [], "All displays");
+        trainBrowseFillSelect(document.getElementById("trainBrowseProjFilter"), d.projects || [], "All projects");
+        if (reset) list.innerHTML = "";
+        trainBrowseState.total = d.total;
+        const frag = document.createDocumentFragment();
+        (d.items || []).forEach(it => {
+            trainBrowseState.items.push(it);
+            frag.appendChild(trainBrowseRenderRow(it));
+        });
+        list.appendChild(frag);
+        trainBrowseState.offset += (d.items || []).length;
+        if (trainBrowseState.items.length === 0) {
+            list.innerHTML = `<div style="font-size:0.74rem;color:#94a3b8;padding:6px;grid-column:1/-1;">No labeled data${f.q || f.box || f.proj ? " matches the filters" : " yet"}.</div>`;
+        }
+        trainBrowseUpdateToolbar();
+    } catch (e) {
+        list.innerHTML = `<div style="font-size:0.74rem;color:#f87171;padding:6px;grid-column:1/-1;">Could not load data: ${e.message}</div>`;
+    } finally {
+        trainBrowseState.loading = false;
+    }
+}
+
+(function setupTrainBrowse() {
+    const el = (id) => document.getElementById(id);
+    el("trainBrowseSearch")?.addEventListener("input", () => {
+        clearTimeout(trainBrowseState.searchTimer);
+        trainBrowseState.searchTimer = setTimeout(() => trainBrowseLoad(true), 300);
+    });
+    el("trainBrowseBoxFilter")?.addEventListener("change", () => trainBrowseLoad(true));
+    el("trainBrowseProjFilter")?.addEventListener("change", () => trainBrowseLoad(true));
+    el("btnTrainBrowseRefresh")?.addEventListener("click", () => trainBrowseLoad(true));
+    el("btnTrainBrowseMore")?.addEventListener("click", () => trainBrowseLoad(false));
+    el("trainBrowseSelectAll")?.addEventListener("change", (e) => {
+        trainBrowseState.items.forEach(i => {
+            if (e.target.checked) trainBrowseState.selected.add(i.frame_id);
+            else trainBrowseState.selected.delete(i.frame_id);
+        });
+        document.querySelectorAll("#trainBrowseList [data-frame-id] input[type=checkbox]").forEach(c => { c.checked = e.target.checked; });
+        trainBrowseUpdateToolbar();
+    });
+    el("btnTrainBrowseDeleteSel")?.addEventListener("click", async () => {
+        const ids = Array.from(trainBrowseState.selected);
+        if (!ids.length) return;
+        if (!confirm(`Delete ${ids.length} labeled frame(s) and all their digit samples?`)) return;
+        await trainBrowseDelete(ids);
+    });
+})();
 
 function updateSelectedSnapshotsSummary() {
     const checklist = document.getElementById("trainSnapshotsChecklist");

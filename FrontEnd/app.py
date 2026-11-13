@@ -8,6 +8,10 @@ import asyncio
 import io
 import os
 import time
+import uuid
+import zipfile
+import tempfile
+import threading
 import logging
 from typing import Optional, Dict, Any, List, Tuple, Set, Union
 from pathlib import Path
@@ -30,6 +34,10 @@ from ocr_trainer import (
     get_training_dataset_stats,
     save_labeled_roi_crop,
     delete_labeled_frame,
+    delete_labeled_frames_bulk,
+    list_labeled_frames,
+    get_labeled_frame_path,
+    update_labeled_frame,
     delete_hard_example,
     assess_crop_quality,
     train_custom_model,
@@ -1340,22 +1348,12 @@ async def test_roi_box_ocr(project_id: str, request: Request, user: str = Depend
 
 @app.get("/api/ocr/projects/{project_id}/export")
 async def export_project_excel(project_id: str, user: str = Depends(require_auth)):
-    """Generate Excel (.xlsx) calibration report with embedded snapshot images and OCR readouts."""
+    """Legacy synchronous export (kept for compatibility). Prefer /export/start + polling to avoid proxy timeouts."""
     proj_dir = resolve_project_dir(project_id)
     if not proj_dir.is_dir():
         raise HTTPException(status_code=404, detail="Project not found")
 
-    meta_file = proj_dir / "project.json"
-    meta = {}
-    if meta_file.exists():
-        try:
-            with open(meta_file, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            pass
-
-    proj_name = meta.get("name", project_id)
-    boxes = meta.get("boxes", [])
+    proj_name, boxes = _read_project_meta(proj_dir, project_id)
 
     try:
         excel_bytes = await asyncio.to_thread(generate_project_excel, proj_dir, proj_name, boxes)
@@ -1370,6 +1368,182 @@ async def export_project_excel(project_id: str, user: str = Depends(require_auth
     except Exception as e:
         logger.error("Excel generation failed for project %s: %s", project_id, e)
         return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+def _read_project_meta(proj_dir: Path, project_id: str):
+    meta = {}
+    meta_file = proj_dir / "project.json"
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            pass
+    return meta.get("name", project_id), meta.get("boxes", [])
+
+
+# ---------------------------------------------------------------------------
+# Background export jobs. State lives in small JSON files (not RAM) because uvicorn
+# runs several worker processes: any worker must be able to answer a status poll.
+# ---------------------------------------------------------------------------
+EXPORT_JOB_DIR = DATA_DIR / "exports"
+EXPORT_JOB_TTL = int(os.environ.get("EXPORT_JOB_TTL", 1800))
+_EXPORT_TASKS: set = set()
+
+
+def _job_path(job_id: str) -> Path:
+    return EXPORT_JOB_DIR / f"{job_id}.json"
+
+
+def _job_write(job_id: str, data: dict) -> None:
+    EXPORT_JOB_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = _job_path(job_id).with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, _job_path(job_id))
+
+
+def _job_read(job_id: str) -> Optional[dict]:
+    if not re.fullmatch(r"[a-f0-9]{16}", job_id or ""):
+        return None
+    p = _job_path(job_id)
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _job_cleanup() -> None:
+    if not EXPORT_JOB_DIR.is_dir():
+        return
+    now = time.time()
+    for p in EXPORT_JOB_DIR.glob("*"):
+        try:
+            if now - p.stat().st_mtime > EXPORT_JOB_TTL:
+                p.unlink()
+        except Exception:
+            pass
+
+
+def _run_export_job(job_id: str, project_id: str, proj_dir: Path, proj_name: str, boxes: list) -> None:
+    state = {"job_id": job_id, "project_id": project_id, "status": "running", "done": 0,
+             "total": 0, "message": "Starting...", "started": time.time()}
+    _job_write(job_id, state)
+    last_write = [0.0]
+
+    def _progress(done: int, total: int, msg: str) -> None:
+        now = time.time()
+        # throttle disk writes (<= ~4/sec) but always flush the last one
+        if now - last_write[0] < 0.25 and done < total:
+            return
+        last_write[0] = now
+        state.update({"done": done, "total": total, "message": msg})
+        _job_write(job_id, state)
+
+    try:
+        data = generate_project_excel(proj_dir, proj_name, boxes, progress_cb=_progress)
+        out_path = EXPORT_JOB_DIR / f"{job_id}.xlsx"
+        out_path.write_bytes(data)
+        filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', proj_name)}_Calibration_Report.xlsx"
+        state.update({"status": "done", "message": "Ready to download", "file": str(out_path),
+                      "filename": filename, "elapsed": round(time.time() - state["started"], 1)})
+    except Exception as e:
+        logger.error("Export job %s failed: %s", job_id, e)
+        state.update({"status": "error", "message": str(e)})
+    _job_write(job_id, state)
+
+
+@app.post("/api/ocr/projects/{project_id}/export/start")
+async def export_project_excel_start(project_id: str, user: str = Depends(require_auth)):
+    """Start Excel generation in the background and return a job id immediately (no proxy timeout)."""
+    record_activity()
+    proj_dir = resolve_project_dir(project_id)
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+    proj_name, boxes = _read_project_meta(proj_dir, project_id)
+    await asyncio.to_thread(_job_cleanup)
+
+    # Re-use a still-running job for the same project instead of starting a duplicate
+    if EXPORT_JOB_DIR.is_dir():
+        for jp in EXPORT_JOB_DIR.glob("*.json"):
+            try:
+                st = json.loads(jp.read_text(encoding="utf-8"))
+                if st.get("project_id") == project_id and st.get("status") == "running" \
+                        and time.time() - st.get("started", 0) < 900:
+                    return {"status": "ok", "job_id": st["job_id"], "reused": True}
+            except Exception:
+                pass
+
+    job_id = uuid.uuid4().hex[:16]
+    _job_write(job_id, {"job_id": job_id, "project_id": project_id, "status": "running",
+                        "done": 0, "total": 0, "message": "Queued...", "started": time.time()})
+    task = asyncio.create_task(asyncio.to_thread(_run_export_job, job_id, project_id, proj_dir, proj_name, boxes))
+    _EXPORT_TASKS.add(task)
+    task.add_done_callback(_EXPORT_TASKS.discard)
+    return {"status": "ok", "job_id": job_id}
+
+
+@app.get("/api/ocr/projects/{project_id}/export/status/{job_id}")
+async def export_project_excel_status(project_id: str, job_id: str, user: str = Depends(require_auth)):
+    record_activity()
+    st = await asyncio.to_thread(_job_read, job_id)
+    if not st:
+        raise HTTPException(status_code=404, detail="Export job not found or expired")
+    return {k: v for k, v in st.items() if k != "file"}
+
+
+@app.get("/api/ocr/projects/{project_id}/export/download/{job_id}")
+async def export_project_excel_download(project_id: str, job_id: str, user: str = Depends(require_auth)):
+    st = await asyncio.to_thread(_job_read, job_id)
+    if not st or st.get("status") != "done" or not st.get("file") or not Path(st["file"]).is_file():
+        raise HTTPException(status_code=404, detail="Export file not ready or expired")
+    return FileResponse(
+        st["file"],
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=st.get("filename", "Calibration_Report.xlsx"),
+    )
+
+
+@app.get("/api/ocr/projects/{project_id}/download_zip")
+async def download_project_images_zip(project_id: str, files: str = "", user: str = Depends(require_auth)):
+    """
+    Bulk-download project snapshot images as a .zip. Optional `files` = comma-separated filenames
+    (omit for all). Images are already compressed, so they are stored (fast) rather than re-deflated.
+    """
+    record_activity()
+    from starlette.background import BackgroundTask
+    proj_dir = resolve_project_dir(project_id)
+    if not proj_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    wanted = {os.path.basename(f.strip()) for f in files.split(",") if f.strip()}
+    all_imgs = sorted(
+        [p for ext in ("*.jpg", "*.jpeg", "*.png") for p in proj_dir.glob(ext)],
+        key=lambda p: p.stat().st_mtime
+    )
+    imgs = [p for p in all_imgs if (not wanted or p.name in wanted)]
+    if not imgs:
+        raise HTTPException(status_code=404, detail="No snapshot images to download")
+
+    proj_name, _ = _read_project_meta(proj_dir, project_id)
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", proj_name)
+
+    def _build() -> str:
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="lumen_zip_")
+        os.close(fd)
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for p in imgs:
+                zf.write(p, arcname=f"{safe}/{p.name}")
+        return tmp_path
+
+    tmp_zip = await asyncio.to_thread(_build)
+    return FileResponse(
+        tmp_zip,
+        media_type="application/zip",
+        filename=f"{safe}_Snapshots_{len(imgs)}.zip",
+        background=BackgroundTask(lambda: os.path.exists(tmp_zip) and os.remove(tmp_zip)),
+    )
 
 
 @app.get("/api/ocr/projects/{project_id}/snapshots/{filename}")
@@ -1711,6 +1885,51 @@ async def api_ocr_train_delete_frame(frame_id: str, user: str = Depends(require_
     record_activity()
     try:
         res = await asyncio.to_thread(delete_labeled_frame, frame_id)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/api/ocr/train/frames")
+async def api_ocr_train_frames(offset: int = 0, limit: int = 60, q: str = "", box_label: str = "",
+                               project_id: str = "", user: str = Depends(require_auth)):
+    """Browse / search all labeled training frames (paged, lightweight rows)."""
+    try:
+        return await asyncio.to_thread(list_labeled_frames, offset, limit, q, box_label, project_id)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/api/ocr/train/frame_image/{frame_id}")
+async def api_ocr_train_frame_image(frame_id: str, user: str = Depends(require_auth)):
+    p = get_labeled_frame_path(frame_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Frame image not found")
+    return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.put("/api/ocr/train/frame/{frame_id}")
+async def api_ocr_train_edit_frame(frame_id: str, request: Request, user: str = Depends(require_auth)):
+    """Edit the labeled reading of a frame (re-segments digits with the corrected label)."""
+    record_activity()
+    payload = await request.json()
+    try:
+        res = await asyncio.to_thread(update_labeled_frame, frame_id, str(payload.get("label", "")))
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.post("/api/ocr/train/frames/delete")
+async def api_ocr_train_delete_frames_bulk(request: Request, user: str = Depends(require_auth)):
+    """Bulk-delete bad labeled frames. Body: {"frame_ids": [...]}."""
+    record_activity()
+    payload = await request.json()
+    ids = payload.get("frame_ids", [])
+    if not isinstance(ids, list) or not ids:
+        return JSONResponse({"status": "error", "message": "No frame_ids provided."}, status_code=400)
+    try:
+        res = await asyncio.to_thread(delete_labeled_frames_bulk, [str(i) for i in ids])
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)

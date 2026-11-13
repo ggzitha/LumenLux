@@ -1993,11 +1993,25 @@
                     <div id="trainMisclassifiedList" style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;"></div>
                 </div>
 
-                <!-- 7. Recent Labeled Frames Queue -->
-                <div style="display: flex; flex-direction: column; gap: 6px;">
-                    <div style="font-size: 0.76rem; font-weight: 700; color: #cbd5e1;">Recent Labeled ROI Crops:</div>
-                    <div id="trainRecentFramesList" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;"></div>
+                <!-- 7. Browse / Edit / Delete Labeled Training Data -->
+                <div style="display: flex; flex-direction: column; gap: 8px; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 10px; padding: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                        <div style="font-size: 0.78rem; font-weight: 700; color: #7dd3fc;">🗂️ Trained Data Browser <span id="trainBrowseCount" style="font-weight: 400; color: #94a3b8; font-size: 0.7rem;"></span></div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                            <input type="text" id="trainBrowseSearch" class="ocr-input" placeholder="Search reading / snapshot..." style="padding: 4px 8px; font-size: 0.74rem; width: 170px;">
+                            <select id="trainBrowseBoxFilter" class="ocr-input" style="padding: 4px 6px; font-size: 0.74rem; width: auto;"><option value="">All displays</option></select>
+                            <select id="trainBrowseProjFilter" class="ocr-input" style="padding: 4px 6px; font-size: 0.74rem; width: auto;"><option value="">All projects</option></select>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                        <label style="font-size: 0.72rem; color: #cbd5e1; display: flex; gap: 4px; align-items: center; cursor: pointer;"><input type="checkbox" id="trainBrowseSelectAll"> Select all shown</label>
+                        <button type="button" class="btn-roi-tool" id="btnTrainBrowseDeleteSel" style="padding: 3px 9px; font-size: 0.72rem; color: #f87171; border-color: rgba(239,68,68,0.4);" disabled>🗑 Delete selected (0)</button>
+                        <button type="button" class="btn-roi-tool" id="btnTrainBrowseRefresh" style="padding: 3px 9px; font-size: 0.72rem;">⟳ Refresh</button>
+                    </div>
+                    <div id="trainBrowseList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 2px;"></div>
+                    <button type="button" class="btn-roi-tool" id="btnTrainBrowseMore" style="display: none; align-self: center; padding: 4px 14px; font-size: 0.74rem;">Load more…</button>
                 </div>
+
 
                 <!-- 8. Actions -->
                 <div class="ocr-modal-actions" style="margin-top: 4px; display: flex; gap: 10px;">

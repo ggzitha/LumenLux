@@ -2749,17 +2749,22 @@ input[type="number"] {
     right: 0;
     bottom: 0;
     z-index: 99999;
-    background: rgba(3, 7, 18, 0.82);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
+    /* NOTE: no backdrop-filter here. Blurring the page behind a full-screen overlay forces the GPU
+       to re-blur every frame of the live camera/WebRTC video underneath, which made modals laggy
+       (worst on Safari/iOS/Firefox and phones). A slightly darker solid scrim looks the same and is free. */
+    background: rgba(3, 7, 18, 0.9);
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.25s ease, visibility 0.25s ease;
+    transition: opacity 0.16s ease, visibility 0.16s ease;
     padding: 1rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    contain: layout style;
 }
 
 .ocr-modal-backdrop.active {
@@ -2769,19 +2774,26 @@ input[type="number"] {
 }
 
 .ocr-modal-card {
-    background: rgba(13, 18, 32, 0.94);
+    background: rgba(13, 18, 32, 0.98);
     border: 1px solid rgba(0, 242, 254, 0.28);
     border-radius: 18px;
     width: 100%;
     max-width: 440px;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(0, 242, 254, 0.12);
-    overflow: hidden;
-    transform: scale(0.92) translateY(10px);
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+    overflow-x: hidden;
+    overflow-y: auto;
+    transform: translateY(8px);
+    transition: transform 0.16s ease-out;
+    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
 }
 
 .ocr-modal-backdrop.active .ocr-modal-card {
-    transform: scale(1) translateY(0);
+    transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ocr-modal-backdrop, .ocr-modal-card { transition: none; }
 }
 
 .ocr-modal-header {

@@ -22,6 +22,7 @@ import uuid
 import base64
 import random
 import logging
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image, ImageOps, ImageDraw, ImageFilter
@@ -127,6 +128,26 @@ def get_train_config() -> Dict[str, Any]:
 
 
 DEFAULT_CLASSES = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "blank"]
+
+_CATALOG_LOCK = threading.RLock()
+
+
+def _load_catalog(catalog_path: Path) -> List[Dict[str, Any]]:
+    if catalog_path.is_file():
+        try:
+            data = json.loads(catalog_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _write_catalog(catalog_path: Path, catalog: List[Dict[str, Any]]) -> None:
+    """Atomic write so a crash / concurrent reader never sees a half-written catalog."""
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = catalog_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(catalog), encoding="utf-8")
+    os.replace(tmp, catalog_path)
 DIGIT_IMG_H = 48
 DIGIT_IMG_W = 32
 
@@ -920,17 +941,8 @@ def save_labeled_roi_crop(
         blank_patch.save(blank_path, format="PNG")
 
     catalog_path = train_dir / "frames_catalog.json"
-    catalog = []
-    if catalog_path.is_file():
-        try:
-            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-        except Exception:
-            catalog = []
 
-    crop_buf = io.BytesIO()
-    pil_crop.convert("RGB").save(crop_buf, format="JPEG", quality=88)
-    crop_b64 = "data:image/jpeg;base64," + base64.b64encode(crop_buf.getvalue()).decode("ascii")
-
+    # Catalog keeps lightweight metadata only (images are served from frames/<id>.jpg)
     entry = {
         "frame_id": frame_id,
         "timestamp": time.time(),
@@ -945,12 +957,12 @@ def save_labeled_roi_crop(
         "is_negative": is_neg,
         "digits": list(clean_digits),
         "quality": quality,
-        "crop_base64": crop_b64,
-        "digit_previews": saved_digits_info
     }
-    catalog.insert(0, entry)
-    catalog = catalog[:350]
-    catalog_path.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+    with _CATALOG_LOCK:
+        catalog = _load_catalog(catalog_path)
+        catalog.insert(0, entry)
+        catalog = catalog[:int(os.environ.get("TRAIN_CATALOG_MAX", "5000"))]
+        _write_catalog(catalog_path, catalog)
 
     return {
         "status": "ok",
@@ -1033,6 +1045,8 @@ def delete_hard_example(hard_id: str) -> Dict[str, Any]:
 
 def delete_labeled_frame(frame_id: str) -> Dict[str, Any]:
     """Remove a labeled frame and all its derived digit crops if the user spots a bad ROI alignment."""
+    if not re.fullmatch(r"frm_[A-Za-z0-9_]+", str(frame_id or "")):
+        raise ValueError("Invalid frame id.")
     cfg = get_train_config()
     train_dir = Path(cfg["train_data_dir"])
     digits_dir = train_dir / "digits"
@@ -1054,19 +1068,169 @@ def delete_labeled_frame(frame_id: str) -> Dict[str, Any]:
             pass
 
     catalog_path = train_dir / "frames_catalog.json"
-    if catalog_path.is_file():
-        try:
-            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    with _CATALOG_LOCK:
+        if catalog_path.is_file():
+            catalog = _load_catalog(catalog_path)
             catalog = [c for c in catalog if c.get("frame_id") != frame_id]
-            catalog_path.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+            _write_catalog(catalog_path, catalog)
 
     return {
         "status": "ok",
         "removed_files": removed_files,
         "dataset_stats": get_training_dataset_stats()
     }
+
+
+def delete_labeled_frames_bulk(frame_ids: List[str]) -> Dict[str, Any]:
+    """Delete many labeled frames at once (bad ROI alignment cleanup)."""
+    removed = 0
+    for fid in frame_ids:
+        fid = str(fid).strip()
+        if not re.fullmatch(r"frm_[A-Za-z0-9_]+", fid):
+            continue
+        r = _delete_frame_files(fid)
+        removed += 1 if r else 0
+    cfg = get_train_config()
+    catalog_path = Path(cfg["train_data_dir"]) / "frames_catalog.json"
+    idset = set(str(x) for x in frame_ids)
+    with _CATALOG_LOCK:
+        if catalog_path.is_file():
+            catalog = [c for c in _load_catalog(catalog_path) if c.get("frame_id") not in idset]
+            _write_catalog(catalog_path, catalog)
+    return {"status": "ok", "deleted": removed, "dataset_stats": get_training_dataset_stats()}
+
+
+def _delete_frame_files(frame_id: str) -> bool:
+    cfg = get_train_config()
+    train_dir = Path(cfg["train_data_dir"])
+    ok = False
+    digits_dir = train_dir / "digits"
+    if digits_dir.is_dir():
+        for p in digits_dir.rglob(f"{frame_id}_*.png"):
+            try:
+                p.unlink()
+                ok = True
+            except Exception:
+                pass
+    frame_jpg = train_dir / "frames" / f"{frame_id}.jpg"
+    if frame_jpg.is_file():
+        try:
+            frame_jpg.unlink()
+            ok = True
+        except Exception:
+            pass
+    return ok
+
+
+def list_labeled_frames(offset: int = 0, limit: int = 60, query: str = "", box_label: str = "",
+                        project_id: str = "") -> Dict[str, Any]:
+    """Browse the full labeled-frame catalog (lightweight rows; images via /api/ocr/train/frame_image/<id>)."""
+    cfg = get_train_config()
+    train_dir = Path(cfg["train_data_dir"])
+    catalog = _load_catalog(train_dir / "frames_catalog.json")
+    q = (query or "").strip().lower()
+
+    box_labels = sorted({str(c.get("box_label", "")) for c in catalog if c.get("box_label")})
+    projects = sorted({str(c.get("project_id", "")) for c in catalog if c.get("project_id")})
+
+    def match(c: Dict[str, Any]) -> bool:
+        if box_label and c.get("box_label") != box_label:
+            return False
+        if project_id and c.get("project_id") != project_id:
+            return False
+        if q:
+            hay = f"{c.get('label_reading','')} {c.get('snapshot_name','')} {c.get('box_label','')} {c.get('project_id','')}".lower()
+            return q in hay
+        return True
+
+    rows = [c for c in catalog if match(c)]
+    total = len(rows)
+    page = rows[max(0, offset): max(0, offset) + max(1, min(limit, 300))]
+    items = []
+    for c in page:
+        items.append({
+            "frame_id": c.get("frame_id"),
+            "timestamp": c.get("timestamp"),
+            "project_id": c.get("project_id"),
+            "snapshot_name": c.get("snapshot_name", ""),
+            "box_label": c.get("box_label"),
+            "camera_type": c.get("camera_type"),
+            "label_reading": c.get("label_reading"),
+            "num_digits": c.get("num_digits"),
+            "decimal_places": c.get("decimal_places"),
+            "quality": c.get("quality"),
+            "crop_url": f"/api/ocr/train/frame_image/{c.get('frame_id')}",
+        })
+    return {"status": "ok", "total": total, "offset": offset, "items": items,
+            "box_labels": box_labels, "projects": projects}
+
+
+def get_labeled_frame_path(frame_id: str) -> Optional[Path]:
+    if not re.fullmatch(r"frm_[A-Za-z0-9_]+", frame_id or ""):
+        return None
+    p = Path(get_train_config()["train_data_dir"]) / "frames" / f"{frame_id}.jpg"
+    return p if p.is_file() else None
+
+
+def update_labeled_frame(frame_id: str, new_label: str) -> Dict[str, Any]:
+    """
+    Edit the ground-truth reading of an already-labeled frame: re-segments the stored crop with the
+    new label, replaces its digit samples, and updates the catalog (decimal profile is re-learned).
+    """
+    frame_path = get_labeled_frame_path(frame_id)
+    if frame_path is None:
+        raise ValueError("Labeled frame image not found.")
+    raw_str = str(new_label).strip()
+    clean_digits, decimal_places, is_neg = _parse_label_decimal_places(raw_str)
+    if not clean_digits:
+        raise ValueError(f"Label '{raw_str}' does not contain any digits (0-9).")
+
+    cfg = get_train_config()
+    train_dir = Path(cfg["train_data_dir"])
+    digits_dir = train_dir / "digits"
+    catalog_path = train_dir / "frames_catalog.json"
+
+    with _CATALOG_LOCK:
+        catalog = _load_catalog(catalog_path)
+        entry = next((c for c in catalog if c.get("frame_id") == frame_id), None)
+        box_ctx = {
+            "id": (entry or {}).get("box_id", ""),
+            "label": (entry or {}).get("box_label", "Display"),
+            "camera_type": (entry or {}).get("camera_type", "chamber"),
+        }
+        pil_crop = Image.open(frame_path).convert("RGB")
+        digit_crops, blank_patch = segment_roi_into_digits(pil_crop, box=box_ctx, expected_digits=len(clean_digits))
+        if len(digit_crops) != len(clean_digits):
+            raise ValueError(f"Could not segment crop into {len(clean_digits)} digits (got {len(digit_crops)}).")
+
+        # Replace old digit samples only after the new segmentation succeeded
+        for p in digits_dir.rglob(f"{frame_id}_*.png"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+        for idx, (d_img, d_char) in enumerate(zip(digit_crops, clean_digits)):
+            cls_folder = digits_dir / d_char
+            cls_folder.mkdir(parents=True, exist_ok=True)
+            d_img.save(cls_folder / f"{frame_id}_d{idx}.png", format="PNG")
+        if blank_patch is not None:
+            (digits_dir / "blank").mkdir(parents=True, exist_ok=True)
+            blank_patch.save(digits_dir / "blank" / f"{frame_id}_blank.png", format="PNG")
+
+        if entry is not None:
+            entry.update({
+                "label_reading": raw_str,
+                "num_digits": len(clean_digits),
+                "decimal_places": decimal_places,
+                "is_negative": is_neg,
+                "digits": list(clean_digits),
+                "edited_at": time.time(),
+            })
+            _write_catalog(catalog_path, catalog)
+
+    return {"status": "ok", "frame_id": frame_id, "label_reading": raw_str,
+            "decimal_places": decimal_places, "digits_saved": len(clean_digits),
+            "dataset_stats": get_training_dataset_stats()}
 
 
 def get_training_dataset_stats() -> Dict[str, Any]:
@@ -1121,7 +1285,11 @@ def get_training_dataset_stats() -> Dict[str, Any]:
         "total_frames": len(frame_ids),
         "class_counts": class_counts,
         "learned_profiles": learned_profiles,
-        "recent_frames": catalog[:30],
+        "recent_frames": [
+            {**{k: v for k, v in c.items() if k not in ("crop_base64", "digit_previews")},
+             "crop_url": f"/api/ocr/train/frame_image/{c.get('frame_id')}"}
+            for c in catalog[:30]
+        ],
         "hard_examples": hard_examples[:20],
         "model_trained": model_path.is_file(),
         "model_info": model_info,

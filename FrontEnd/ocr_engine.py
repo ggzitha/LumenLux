@@ -9,6 +9,8 @@ Provides:
 """
 import io
 import os
+import json
+import threading
 import re
 import math
 import logging
@@ -75,6 +77,7 @@ class _ModelRunner:
         self.ov_compiled = None
         self.ort_session = None
         self.input_name = None
+        self._ov_lock = threading.Lock()
 
         # 1. Prefer Native Intel OpenVINO Runtime when available
         if HAS_OPENVINO and ov is not None and ov_core is not None:
@@ -103,8 +106,9 @@ class _ModelRunner:
 
     def run(self, tensor: np.ndarray) -> np.ndarray:
         if self.ov_compiled is not None:
-            res = self.ov_compiled([tensor])
-            return res[self.ov_compiled.output(0)]
+            with self._ov_lock:
+                res = self.ov_compiled([tensor])
+                return np.array(res[self.ov_compiled.output(0)])
         if self.ort_session is not None:
             return self.ort_session.run(None, {self.input_name: tensor})[0]
         raise RuntimeError("ModelRunner not initialized")
@@ -1610,7 +1614,8 @@ def extract_thermometer_value(text: str, box: Optional[Dict[str, Any]] = None) -
     return None
 
 
-def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_feed: bool = False) -> Dict[str, Any]:
+def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_feed: bool = False,
+                        fast: bool = False, allow_tesseract: bool = True) -> Dict[str, Any]:
     """
     Primary: Ultra-fast Intel OpenVINO / ONNX AI Multi-Model Ensemble OCR (PP-OCRv4 + PP-OCRv6).
     Fallback: Specialized Tesseract OCR with 7-segment morphology pipeline if AI model invalid or unconfident.
@@ -1703,7 +1708,8 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
         review_reasons.append(f"Reader disagreement (CNN={cnn_val} vs AI={onnx_val})")
         try:
             from ocr_trainer import log_hard_example
-            log_hard_example(crop, box, f"{cnn_val} vs {onnx_val}", min(cnn_conf, onnx_conf), reason="reader_disagreement")
+            if not fast:
+                log_hard_example(crop, box, f"{cnn_val} vs {onnx_val}", min(cnn_conf, onnx_conf), reason="reader_disagreement")
         except Exception:
             pass
 
@@ -1742,7 +1748,8 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
             review_reasons.append(f"Confidence {onnx_conf:.2f} < {hard_thresh:.2f}")
             try:
                 from ocr_trainer import log_hard_example
-                log_hard_example(crop, box, onnx_text, onnx_conf, reason=f"ai_conf_{onnx_conf:.2f}_below_{hard_thresh:.2f}")
+                if not fast:
+                    log_hard_example(crop, box, onnx_text, onnx_conf, reason=f"ai_conf_{onnx_conf:.2f}_below_{hard_thresh:.2f}")
             except Exception:
                 pass
         ver_str = getattr(onnx_ocr_engine, "model_version", "v4").upper()
@@ -1766,7 +1773,7 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
     # Triggered automatically if ONNX AI was missing or returned invalid / non-numeric text
     logger.info("[OCR Engine] AI ONNX returned '%s' (val=%s, conf=%.2f). Engaging Tesseract fallback...", onnx_text, onnx_val, onnx_conf)
 
-    if not HAS_TESSERACT:
+    if not HAS_TESSERACT or (fast and not allow_tesseract):
         return {
             "text": onnx_text or "OCR Engine N/A",
             "value": onnx_val,
@@ -1801,6 +1808,8 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
 
     tess_text = ""
     tess_val = None
+    if fast:
+        ocr_configs = ocr_configs[:2]
 
     for cfg in ocr_configs:
         try:
@@ -1842,12 +1851,89 @@ def perform_display_ocr(pil_img: Image.Image, box: Dict[str, Any], is_single_fee
     }
 
 
-def generate_project_excel(project_dir: Path, arg2: Any, arg3: Any = None) -> bytes:
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _export_model_signature() -> str:
+    """Signature of everything that changes OCR output (AI model set + trained CNN mtime)."""
+    # Engine initializes lazily and rewrites model_version, so warm it up *before* signing
+    # (also avoids several worker threads racing to load the models on first use).
+    try:
+        if onnx_ocr_engine is not None and not getattr(onnx_ocr_engine, "_initialized", True):
+            onnx_ocr_engine.initialize()
+    except Exception:
+        pass
+    try:
+        from ocr_trainer import custom_cnn_engine
+        if hasattr(custom_cnn_engine, "reload"):
+            custom_cnn_engine.reload()
+    except Exception:
+        pass
+    sig = [str(getattr(onnx_ocr_engine, "model_version", "none"))]
+    try:
+        from ocr_trainer import get_train_config
+        cm = Path(get_train_config().get("custom_model_path", ""))
+        if cm.is_file():
+            sig.append(str(cm.stat().st_mtime_ns))
+    except Exception:
+        pass
+    return "|".join(sig)
+
+
+def _export_cache_key(img_path: Path, box: Dict[str, Any], model_sig: str) -> str:
+    import hashlib
+    st = img_path.stat()
+    box_sig = json.dumps(
+        {k: box.get(k) for k in ("id", "label", "points", "x", "y", "width", "height", "w", "h",
+                                 "camera_type", "target", "mode", "decimals")},
+        sort_keys=True, default=str
+    )
+    raw = f"{img_path.name}|{st.st_mtime_ns}|{st.st_size}|{box_sig}|{model_sig}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _make_excel_thumb(crop_bytes: Optional[bytes]) -> Optional[bytes]:
+    """Down-scale the crop to a small JPEG so the .xlsx stays light and Excel opens fast."""
+    if not crop_bytes:
+        return None
+    try:
+        im = Image.open(io.BytesIO(crop_bytes)).convert("RGB")
+        im.thumbnail((int(os.environ.get("EXPORT_THUMB_MAX_W", 520)), int(os.environ.get("EXPORT_THUMB_MAX_H", 260))),
+                     Image.Resampling.BILINEAR)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=82)
+        return buf.getvalue()
+    except Exception:
+        return crop_bytes
+
+
+def generate_project_excel(
+    project_dir: Path,
+    arg2: Any,
+    arg3: Any = None,
+    *,
+    progress_cb: Optional[Any] = None,
+    workers: Optional[int] = None,
+    use_cache: Optional[bool] = None,
+) -> bytes:
     """
     Processes all snapshots in a project directory and builds an Excel calibration sheet
     with embedded thumbnail images and OCR readings.
+
+    Speed-ups (all tunable from .env):
+      * EXPORT_WORKERS            - snapshots OCR'd in parallel (thread pool)
+      * EXPORT_USE_CACHE          - per (snapshot, ROI, model) result cache, so re-exports are instant
+      * EXPORT_TESSERACT_FALLBACK - allow the slow Tesseract fallback during export
+      * EXPORT_THUMB_MAX_W/H      - embedded thumbnail size
+    `progress_cb(done, total, message)` is called from worker threads as work completes.
     Supports both signatures: (project_dir, boxes, project_name) or (project_dir, project_name, boxes).
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     if isinstance(arg2, str):
         project_name = arg2
         boxes_config = arg3 or []
@@ -1858,6 +1944,12 @@ def generate_project_excel(project_dir: Path, arg2: Any, arg3: Any = None) -> by
     if not HAS_OPENPYXL:
         raise RuntimeError("openpyxl library is required to generate Excel reports.")
 
+    if workers is None:
+        workers = int(os.environ.get("EXPORT_WORKERS", min(8, (os.cpu_count() or 4))))
+    workers = max(1, workers)
+    if use_cache is None:
+        use_cache = _env_bool("EXPORT_USE_CACHE", True)
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Calibration OCR Results"
@@ -1865,20 +1957,23 @@ def generate_project_excel(project_dir: Path, arg2: Any, arg3: Any = None) -> by
 
     # Styling Palettes
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid") # Dark Slate
-    sub_fill = PatternFill(start_color="0284C7", end_color="0284C7", fill_type="solid")   # Vibrant Cyan Blue
-    
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")  # Dark Slate
+    sub_fill = PatternFill(start_color="0284C7", end_color="0284C7", fill_type="solid")     # Vibrant Cyan Blue
+
     cell_font = Font(name="Calibri", size=10)
     num_font = Font(name="Consolas", size=13, bold=True)
     center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_align = Alignment(horizontal="left", vertical="center")
-    
+
     thin_border = Border(
         left=Side(style="thin", color="CBD5E1"),
         right=Side(style="thin", color="CBD5E1"),
         top=Side(style="thin", color="CBD5E1"),
         bottom=Side(style="thin", color="CBD5E1")
     )
+    fill_ok = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    fill_warn = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid")
+    fill_err = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
 
     # Title Banner Row
     ws.merge_cells("A1:G1")
@@ -1888,148 +1983,209 @@ def generate_project_excel(project_dir: Path, arg2: Any, arg3: Any = None) -> by
     title_cell.alignment = left_align
     ws.row_dimensions[1].height = 28
 
-    # Table Header Definition
-    # Structure: No | Timestamp | Filename | [Img Columns for each box] | [OCR Columns for each box]
     headers = ["No", "Timestamp", "Capture Filename"]
     box_labels = [b.get("label", f"Thermo {i+1}") for i, b in enumerate(boxes_config)]
-    
     for lbl in box_labels:
         headers.append(f"{lbl} (Image)")
     for lbl in box_labels:
         headers.append(f"{lbl} (OCR °C)")
 
-    # Write Headers at Row 3
     for col_idx, header_text in enumerate(headers, start=1):
         cell = ws.cell(row=3, column=col_idx, value=header_text)
         cell.font = header_font
         cell.fill = sub_fill if "(Image)" in header_text else header_fill
         cell.alignment = center_align
         cell.border = thin_border
-
     ws.row_dimensions[3].height = 26
 
-    # Discover snapshot files in project directory
     image_files = sorted(
         list(project_dir.glob("*.jpg")) + list(project_dir.glob("*.png")) + list(project_dir.glob("*.jpeg")),
         key=lambda p: p.stat().st_mtime
     )
+    total = len(image_files)
 
-    current_row = 4
-    temp_dir = project_dir / ".excel_thumbs"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    for snap_idx, img_path in enumerate(image_files, start=1):
-        ws.row_dimensions[current_row].height = 130  # Generous height to clearly show thermometer screen display
-
-        # Read image
+    # ---------------- result cache (persistent across exports) ----------------
+    cache_json = project_dir / ".ocr_export_cache.json"
+    cache_dir = project_dir / ".ocr_export_cache"
+    cache: Dict[str, Any] = {}
+    if use_cache and cache_json.is_file():
         try:
-            pil_snap = Image.open(img_path).convert("RGB")
-        except Exception as e:
-            logger.error("Could not open snapshot %s: %s", img_path.name, e)
-            continue
+            cache = json.loads(cache_json.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+    model_sig = _export_model_signature()
+    new_entries: Dict[str, Any] = {}
+    lock = threading.Lock()
+    state = {"done": 0, "cache_hits": 0}
+    allow_tess = _env_bool("EXPORT_TESSERACT_FALLBACK", True)
 
-        timestamp_str = img_path.stem.replace("LumenLux_", "").replace("_", " ")
+    def _read_thumb(entry: Dict[str, Any]) -> Optional[bytes]:
+        tp = entry.get("thumb")
+        if not tp:
+            return None
+        p = cache_dir / tp
+        return p.read_bytes() if p.is_file() else None
 
-        # 1. Meta columns
-        c_no = ws.cell(row=current_row, column=1, value=snap_idx)
-        c_no.alignment = center_align
-        c_no.border = thin_border
-        c_no.font = cell_font
-
-        c_time = ws.cell(row=current_row, column=2, value=timestamp_str)
-        c_time.alignment = center_align
-        c_time.border = thin_border
-        c_time.font = cell_font
-
-        c_file = ws.cell(row=current_row, column=3, value=img_path.name)
-        c_file.alignment = left_align
-        c_file.border = thin_border
-        c_file.font = cell_font
-
-        # Process each designated bounding box
-        ocr_results = []
-        col_offset = 4
-
-        for b_idx, box in enumerate(boxes_config):
-            res = perform_display_ocr(pil_snap, box)
-            ocr_results.append(res)
-
-            # Insert Image thumbnail into cell
-            thumb_col = col_offset + b_idx
-            thumb_cell = ws.cell(row=current_row, column=thumb_col)
-            thumb_cell.border = thin_border
-            thumb_cell.alignment = center_align
-
-            if res.get("crop_bytes"):
-                thumb_file_path = temp_dir / f"r{current_row}_b{b_idx}.jpg"
-                with open(thumb_file_path, "wb") as f:
-                    f.write(res["crop_bytes"])
-                
-                # Add to worksheet
+    def _process_snapshot(img_path: Path) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        pil_snap = None
+        try:
+            for box in boxes_config:
+                key = _export_cache_key(img_path, box, model_sig)
+                hit = cache.get(key) if use_cache else None
+                if hit is not None:
+                    thumb = _read_thumb(hit)
+                    if thumb is not None or not hit.get("thumb"):
+                        with lock:
+                            state["cache_hits"] += 1
+                        out.append({**hit, "thumb_bytes": thumb})
+                        continue
+                if pil_snap is None:
+                    pil_snap = Image.open(img_path).convert("RGB")
+                res = perform_display_ocr(pil_snap, box, fast=True, allow_tesseract=allow_tess)
+                thumb = _make_excel_thumb(res.get("crop_bytes"))
+                entry = {
+                    "value": res.get("value"),
+                    "text": res.get("text", "N/A"),
+                    "status": res.get("status"),
+                    "confidence": res.get("confidence"),
+                    "engine": res.get("engine"),
+                }
+                if use_cache:
+                    thumb_name = f"{key}.jpg" if thumb else None
+                    if thumb:
+                        try:
+                            cache_dir.mkdir(parents=True, exist_ok=True)
+                            (cache_dir / thumb_name).write_bytes(thumb)
+                        except Exception:
+                            thumb_name = None
+                    entry["thumb"] = thumb_name
+                    with lock:
+                        new_entries[key] = dict(entry)
+                out.append({**entry, "thumb_bytes": thumb})
+        except Exception as ex:
+            logger.error("Could not process snapshot %s: %s", img_path.name, ex)
+            while len(out) < len(boxes_config):
+                out.append({"value": None, "text": "N/A", "status": "error", "thumb_bytes": None})
+        finally:
+            with lock:
+                state["done"] += 1
+                done = state["done"]
+            if progress_cb:
                 try:
-                    xl_img = OpenpyxlImage(str(thumb_file_path))
-                    # Scale image proportionally to clearly show thermometer screen (up to 260x125 px)
-                    target_w, target_h = 260, 125
-                    orig_w, orig_h = xl_img.width, xl_img.height
-                    if orig_w > 0 and orig_h > 0:
-                        aspect_ratio = orig_w / float(orig_h)
-                        if aspect_ratio >= (target_w / target_h):
-                            xl_img.width = target_w
-                            xl_img.height = max(30, int(target_w / aspect_ratio))
+                    progress_cb(done, total, f"OCR {done}/{total} (cache hits: {state['cache_hits']})")
+                except Exception:
+                    pass
+        return out
+
+    if progress_cb:
+        try:
+            progress_cb(0, total, f"Starting OCR on {total} snapshots with {workers} worker(s)...")
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="xl-ocr") as pool:
+        futures = [pool.submit(_process_snapshot, p) for p in image_files]
+
+        current_row = 4
+        for snap_idx, (img_path, fut) in enumerate(zip(image_files, futures), start=1):
+            ocr_results = fut.result()
+            ws.row_dimensions[current_row].height = 130
+
+            timestamp_str = img_path.stem.replace("LumenLux_", "").replace("_", " ")
+
+            c_no = ws.cell(row=current_row, column=1, value=snap_idx)
+            c_no.alignment = center_align
+            c_no.border = thin_border
+            c_no.font = cell_font
+
+            c_time = ws.cell(row=current_row, column=2, value=timestamp_str)
+            c_time.alignment = center_align
+            c_time.border = thin_border
+            c_time.font = cell_font
+
+            c_file = ws.cell(row=current_row, column=3, value=img_path.name)
+            c_file.alignment = left_align
+            c_file.border = thin_border
+            c_file.font = cell_font
+
+            col_offset = 4
+            for b_idx, res in enumerate(ocr_results):
+                thumb_col = col_offset + b_idx
+                thumb_cell = ws.cell(row=current_row, column=thumb_col)
+                thumb_cell.border = thin_border
+                thumb_cell.alignment = center_align
+
+                tb = res.get("thumb_bytes")
+                if tb:
+                    try:
+                        xl_img = OpenpyxlImage(io.BytesIO(tb))
+                        target_w, target_h = 260, 125
+                        orig_w, orig_h = xl_img.width, xl_img.height
+                        if orig_w > 0 and orig_h > 0:
+                            aspect_ratio = orig_w / float(orig_h)
+                            if aspect_ratio >= (target_w / target_h):
+                                xl_img.width = target_w
+                                xl_img.height = max(30, int(target_w / aspect_ratio))
+                            else:
+                                xl_img.height = target_h
+                                xl_img.width = max(30, int(target_h * aspect_ratio))
                         else:
+                            xl_img.width = target_w
                             xl_img.height = target_h
-                            xl_img.width = max(30, int(target_h * aspect_ratio))
-                    else:
-                        xl_img.width = target_w
-                        xl_img.height = target_h
+                        ws.add_image(xl_img, f"{get_column_letter(thumb_col)}{current_row}")
+                    except Exception as ex:
+                        logger.warning("Could not embed image: %s", ex)
 
-                    col_letter = get_column_letter(thumb_col)
-                    ws.add_image(xl_img, f"{col_letter}{current_row}")
-                except Exception as ex:
-                    logger.warning("Could not embed image: %s", ex)
+            text_col_offset = col_offset + len(boxes_config)
+            for b_idx, res in enumerate(ocr_results):
+                txt_cell = ws.cell(row=current_row, column=text_col_offset + b_idx)
+                txt_cell.value = res.get("value") if res.get("value") is not None else res.get("text", "N/A")
+                txt_cell.font = num_font
+                txt_cell.alignment = center_align
+                txt_cell.border = thin_border
+                st = res.get("status")
+                txt_cell.fill = fill_ok if st == "success" else fill_warn if st == "warning" else fill_err
 
-        # Write OCR Values in following columns
-        text_col_offset = col_offset + len(boxes_config)
-        for b_idx, res in enumerate(ocr_results):
-            txt_col = text_col_offset + b_idx
-            txt_cell = ws.cell(row=current_row, column=txt_col)
-            txt_cell.value = res.get("value") if res.get("value") is not None else res.get("text", "N/A")
-            txt_cell.font = num_font
-            txt_cell.alignment = center_align
-            txt_cell.border = thin_border
-
-            # Subtle color indication in Excel
-            st = res.get("status")
-            if st == "success":
-                txt_cell.fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid") # Soft Green
-            elif st == "warning":
-                txt_cell.fill = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid") # Soft Yellow
-            else:
-                txt_cell.fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid") # Soft Red
-
-        current_row += 1
+            current_row += 1
 
     # Adjust Column Widths
     ws.column_dimensions["A"].width = 6
     ws.column_dimensions["B"].width = 24
     ws.column_dimensions["C"].width = 30
-
     for i in range(len(boxes_config)):
-        img_col = get_column_letter(4 + i)
-        ocr_col = get_column_letter(4 + len(boxes_config) + i)
-        ws.column_dimensions[img_col].width = 38
-        ws.column_dimensions[ocr_col].width = 20
+        ws.column_dimensions[get_column_letter(4 + i)].width = 38
+        ws.column_dimensions[get_column_letter(4 + len(boxes_config) + i)].width = 20
 
-    # Save to buffer
+    if progress_cb:
+        try:
+            progress_cb(total, total, "Building .xlsx file...")
+        except Exception:
+            pass
+
     output_stream = io.BytesIO()
     wb.save(output_stream)
-    
-    # Cleanup temp thumbnail cache
-    try:
-        for p in temp_dir.glob("*.jpg"):
-            p.unlink(missing_ok=True)
-        temp_dir.rmdir()
-    except Exception:
-        pass
+
+    # Persist cache (drop stale keys to keep it bounded) + purge legacy temp thumbs
+    if use_cache and new_entries:
+        try:
+            cache.update(new_entries)
+            max_entries = int(os.environ.get("EXPORT_CACHE_MAX_ENTRIES", 20000))
+            if len(cache) > max_entries:
+                for k in list(cache.keys())[: len(cache) - max_entries]:
+                    cache.pop(k, None)
+            tmp = cache_json.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cache), encoding="utf-8")
+            os.replace(tmp, cache_json)
+        except Exception as ex:
+            logger.warning("Could not persist OCR export cache: %s", ex)
+    legacy = project_dir / ".excel_thumbs"
+    if legacy.is_dir():
+        try:
+            for p in legacy.glob("*.jpg"):
+                p.unlink(missing_ok=True)
+            legacy.rmdir()
+        except Exception:
+            pass
 
     return output_stream.getvalue()
